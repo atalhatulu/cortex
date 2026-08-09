@@ -1,10 +1,10 @@
-# ⚛ CORTEX Engine
+# Cortex
 
 Cortex is an experimental, extremely fast lossless data compressor designed around a modern Burrows-Wheeler Transform (BWT) architecture. 
 
-It aims to push the boundaries of BWT-based compression speed and ratio, proving that a pure BWT engine can still outperform some of the best modern dictionary-based algorithms (like ZSTD) on highly repetitive or text-based datasets like `enwik8`.
+It aims to push the boundaries of BWT-based compression speed and ratio, proving that BWT can still outperform some of the best modern dictionary-based algorithms (like ZSTD) on highly repetitive or text-based datasets like `enwik8`.
 
-## 🚀 The Architecture
+## The Architecture
 
 Cortex abandons traditional O(n) Cyclic BWT construction in favor of a **Suffix Array based BWT** combined with an implicit EOF approach. 
 
@@ -14,25 +14,26 @@ Cortex abandons traditional O(n) Cyclic BWT construction in favor of a **Suffix 
 4. **Context Modeling**: An adaptive probability mixer (Order-1 and Order-2 contexts) tracks bit probabilities.
 5. **Range Coder**: A highly optimized carryless arithmetic range coder squashes the predicted bits into their theoretical minimum sizes. 
 
-## 📊 Benchmarks (The 24.99 MB Record)
+## Benchmark (The 24.99 MB Record)
 
 Tested on the standard 100 MB `enwik8` dataset.
 
-| Compressor | Size (MB) | Time (s) |
-|------------|-----------|----------|
-| ZSTD -19   | 25.68 MB  | ~ 11.0 s |
-| **Cortex** | **24.99 MB** | **~ 5.5 s** |
+| Compressor | Size (MB) | Time (s) | Memory |
+|------------|-----------|----------|--------|
+| ZSTD -19   | 25.68 MB  | ~ 11.0 s | ~ 60 MB |
+| **Cortex** | **24.99 MB** | **~ 5.5 s** | **~ 400 MB** |
 
 *Cortex compresses enwik8 smaller and nearly 2x faster than ZSTD at its maximum compression level!*
 
-## ⚙️ Usage
+## Installation
 
-Cortex is designed to be incredibly simple from the terminal. 
-
-**Build and Install:**
 ```bash
-cargo install --path core/ --force
+cargo install --path . --force
 ```
+
+## Usage
+
+Cortex was designed to be incredibly simple from the terminal. 
 
 **Compress a file:**
 ```bash
@@ -44,4 +45,4 @@ cortex compress enwik8
 ```bash
 cortex decompress enwik8.crx
 ```
-*(Automatically restores `enwik8`)*
+*(Automatically creates `enwik8`)*

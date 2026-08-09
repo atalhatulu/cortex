@@ -1,0 +1,18 @@
+# Compiled Output
+/target/
+/core/target/
+
+# Dependency Directories
+Cargo.lock
+
+# Test and Output Files
+*.crx
+*.out
+/tmp/
+enwik8
+enwik8.zip
+
+# Backup Files
+**/*.rs.bk
+*.swp
+*~

@@ -1,0 +1,8 @@
+# TASKS
+
+[x] BWT + MTF + RLE Pipeline
+[x] Range Coder Bitwise Math
+[x] Parallel Block Processing (Rayon)
+[x] Hash-Based Order-2 Predictor
+[x] Native Desktop GUI Integration (Tauri in ../cortex-ui)
+[ ] Release v1.0
