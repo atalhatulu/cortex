@@ -20,7 +20,9 @@ Tested on the standard 100 MB `enwik8` dataset.
 
 | Compressor | Size (MB) | Time (s) |
 |------------|-----------|----------|
-| ZSTD -19   | 25.68 MB  | ~ 11.0 s |
+| GZIP / ZIP (-9) | ~ 35.0 MB | ~ 7.7 s |
+| BZIP2 (-9) | ~ 28.3 MB | ~ 8.8 s |
+| ZSTD (-19) | ~ 25.7 MB  | ~ 11.0 s |
 | **Cortex** | **24.99 MB** | **~ 5.5 s** |
 
 *Cortex compresses enwik8 smaller and nearly 2x faster than ZSTD at its maximum compression level!*
