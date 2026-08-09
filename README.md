@@ -16,14 +16,17 @@ Cortex abandons traditional O(n) Cyclic BWT construction in favor of a **Suffix 
 
 ## 📊 Benchmarks (The 24.99 MB Record)
 
-Tested on the standard 100 MB `enwik8` dataset.
+Tested on the standard 100 MB `enwik8` and 1 GB `enwik9` datasets.
 
-| Compressor | Size (MB) | Time (s) |
-|------------|-----------|----------|
-| GZIP / ZIP (-9) | ~ 35.0 MB | ~ 7.7 s |
-| BZIP2 (-9) | ~ 28.3 MB | ~ 8.8 s |
-| ZSTD (-19) | ~ 25.7 MB  | ~ 11.0 s |
-| **Cortex** | **24.99 MB** | **~ 5.5 s** |
+| Dataset | Compressor | Size (MB) | Time (s) |
+|---------|------------|-----------|----------|
+| enwik8  | GZIP / ZIP (-9) | ~ 35.0 MB | ~ 7.7 s |
+| enwik8  | BZIP2 (-9) | ~ 28.3 MB | ~ 8.8 s |
+| enwik8  | ZSTD (-19) | ~ 25.7 MB  | ~ 11.0 s |
+| enwik8  | **Cortex** | **24.99 MB** | **~ 5.5 s** |
+| | | | |
+| enwik9  | GZIP (-9)  | ~ 308.0 MB | ~ 48.0 s |
+| enwik9  | **Cortex** | **208.0 MB** | **~ 67.0 s** |
 
 *Cortex compresses enwik8 smaller and nearly 2x faster than ZSTD at its maximum compression level!*
 
