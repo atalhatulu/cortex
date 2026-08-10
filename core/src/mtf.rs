@@ -229,15 +229,19 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
         sum += counts[i];
     }
 
-    let mut t_arr = vec![0usize; n];
+    // `t_arr` holds bucket positions within the chunk. Chunks are ≤ 64 MB, so
+    // positions always fit in u32; using u32 instead of usize halves this
+    // array's footprint (4 vs 8 bytes per entry) — the single biggest decode
+    // memory line item for large blocks.
+    let mut t_arr = vec![0u32; n];
     let c_last = bwt[pidx] as usize;
-    t_arr[pidx] = start[c_last];
+    t_arr[pidx] = start[c_last] as u32;
     start[c_last] += 1;
 
     for i in 0..n {
         if i == pidx { continue; }
         let b = bwt[i] as usize;
-        t_arr[i] = start[b];
+        t_arr[i] = start[b] as u32;
         start[b] += 1;
     }
 
@@ -245,7 +249,7 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
     let mut p = pidx;
     for i in (0..n).rev() {
         chunk_out[i] = bwt[p];
-        p = t_arr[p];
+        p = t_arr[p] as usize;
     }
 
     Ok(chunk_out)

@@ -24,6 +24,21 @@ pub fn block_size_for_level(level: u8) -> usize {
     }
 }
 
+/// Memory budget per processing batch (bytes). Bounds worst-case peak RSS:
+/// with a fixed batch of 16, the largest blocks (64 MB) would keep ~10 GB
+/// resident and OOM typical consumer machines.
+const BATCH_MEMORY_BUDGET: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
+const MAX_BATCH_SIZE: usize = 16;
+
+/// How many chunks may run concurrently for a given block size.
+/// `bytes_per_input_byte` is a conservative per-chunk peak-memory multiplier:
+/// ~10 for compression (input + 4-byte SA + BWT + tokens + slack),
+/// ~8 for decompression (BWT + 4-byte `t_arr` + output + tokens).
+fn batch_size_for(block_size: usize, bytes_per_input_byte: usize) -> usize {
+    let per_chunk = block_size.saturating_mul(bytes_per_input_byte).max(1);
+    (BATCH_MEMORY_BUDGET / per_chunk).clamp(1, MAX_BATCH_SIZE)
+}
+
 pub struct Stats {
     pub input_size: usize,
     pub output_size: usize,
@@ -64,7 +79,10 @@ where
     // silently ignored and let the GUI/CLI disagree with the engine.
     let block_size_actual = block_size_for_level(_level);
 
-    let batch_size = 16;
+    // Batch size derived from block size via the memory budget (see
+    // `batch_size_for`): the biggest blocks run few concurrent chunks so
+    // worst-case RSS stays bounded instead of growing without limit.
+    let batch_size = batch_size_for(block_size_actual, 10);
     let mut out_file = SplitWriter::new(output, _split_size as u64)?;
 
     // Crypto
@@ -236,7 +254,7 @@ where
     let start = Instant::now();
     callback(0, orig_len);
 
-    let batch_size = 16;
+    let batch_size = batch_size_for(block_size, 8);
     let mut out_file = fs::File::create(output)?;
     let mut num_comp_chunks = 0;
     let mut processed = 0;

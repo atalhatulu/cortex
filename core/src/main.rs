@@ -100,8 +100,23 @@ fn main() -> std::io::Result<()> {
         Commands::Decompress { input, output, password, threads, force, quiet, verbose } => {
             setup_threads(threads);
             let out_file = output.unwrap_or_else(|| {
-                if input.ends_with(".crx") {
-                    input[..input.len()-4].to_string()
+                let mut stem = input.to_string();
+                let mut changed = false;
+                // Normalize a split-volume path (archive.crx.001, archive.crx.002, …)
+                // to its base name so restore produces the original filename.
+                if stem.len() >= 4
+                    && stem.as_bytes()[stem.len() - 4] == b'.'
+                    && stem.as_bytes()[stem.len() - 3..].iter().all(u8::is_ascii_digit)
+                {
+                    stem.truncate(stem.len() - 4);
+                    changed = true;
+                }
+                if stem.ends_with(".crx") {
+                    stem.truncate(stem.len() - 4);
+                    changed = true;
+                }
+                if changed && !stem.is_empty() {
+                    stem
                 } else {
                     format!("{}.out", input)
                 }
