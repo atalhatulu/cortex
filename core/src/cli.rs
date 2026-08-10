@@ -15,7 +15,7 @@ pub enum Commands {
         input: String,
         /// The output file path (optional, defaults to <input>.crx)
         output: Option<String>,
-        /// Compression level (1: Fast, 2: Balanced, 3: Ultra)
+        /// Compression level: 1 = fastest (1 MB blocks), 3 = 16 MB blocks, 9 = smallest (64 MB blocks)
         #[arg(short, long, default_value_t = 3)]
         level: u8,
         /// Password for encryption (optional)

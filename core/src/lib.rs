@@ -7,7 +7,22 @@ use rayon::prelude::*;
 use std::fs;
 use std::time::{Duration, Instant};
 
-const BLOCK_SIZE: usize = 16 * 1024 * 1024;
+/// Single source of truth for the level → block-size mapping.
+///
+/// Higher levels use larger BWT blocks (more context, better ratio, more
+/// memory). Keeping this in one place means the CLI and the GUI can never
+/// disagree with the engine about what a given level means. Level 0 is
+/// folded into level 1; anything above 9 falls back to level-3 behavior.
+pub fn block_size_for_level(level: u8) -> usize {
+    match level {
+        0..=1 => 1 * 1024 * 1024,
+        2 => 4 * 1024 * 1024,
+        3 => 16 * 1024 * 1024,
+        4..=5 => 32 * 1024 * 1024,
+        6..=9 => 64 * 1024 * 1024,
+        _ => 16 * 1024 * 1024,
+    }
+}
 
 pub struct Stats {
     pub input_size: usize,
@@ -17,7 +32,7 @@ pub struct Stats {
 }
 
 pub fn compress_file(input: &str, output: &str) -> std::io::Result<Stats> {
-    compress_file_with_progress(input, output, None, None, 3, 0, BLOCK_SIZE, |_, _| {})
+    compress_file_with_progress(input, output, None, None, 3, 0, |_, _| {})
 }
 
 pub fn decompress_file(input: &str, output: &str) -> std::io::Result<Stats> {
@@ -31,7 +46,6 @@ pub fn compress_file_with_progress<F>(
     _password: Option<&str>,
     _level: u8,
     _split_size: usize,
-    _block_size: usize,
     mut callback: F,
 ) -> std::io::Result<Stats>
 where
@@ -39,19 +53,16 @@ where
 {
     use std::io::{Read, Write};
     use split_io::SplitWriter;
-    
+
     let mut in_file = fs::File::open(input)?;
     let start = Instant::now();
     let total_len = in_file.metadata()?.len() as usize;
     callback(0, total_len);
 
-    // Map _level (0..=9) to block_size. Level 3 = 16MB. Level 1 = 1MB. Level 9 = 64MB.
-    let block_size_actual = match _level {
-        0..=2 => 1 * 1024 * 1024,
-        3..=5 => 16 * 1024 * 1024,
-        6..=9 => 64 * 1024 * 1024,
-        _ => 16 * 1024 * 1024,
-    };
+    // Block size is decided here from the level via `block_size_for_level`,
+    // the single source of truth. The previous `block_size` parameter was
+    // silently ignored and let the GUI/CLI disagree with the engine.
+    let block_size_actual = block_size_for_level(_level);
 
     let batch_size = 16;
     let mut out_file = SplitWriter::new(output, _split_size as u64)?;
@@ -165,7 +176,9 @@ where
     use split_io::SplitReader;
     
     let mut in_file = SplitReader::new(input)?;
-    let file_len = 0; // Not critical for output
+    // Report the real archive size (all split volumes combined) so stats are
+    // truthful. Only used for reporting — never for decode correctness.
+    let file_len = in_file.total_size()? as usize;
     
     let mut header = vec![0u8; 17];
     in_file.read_exact(&mut header)?;

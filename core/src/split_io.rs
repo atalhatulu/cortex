@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -81,6 +81,25 @@ impl SplitReader {
         } else {
             Ok(false)
         }
+    }
+
+    /// Total size in bytes across all volumes (base + `.001`, `.002`, …).
+    /// Used only for reporting (e.g. the CLI "Input:" stat) — it never
+    /// affects decode correctness.
+    pub fn total_size(&self) -> io::Result<u64> {
+        let mut total = self.current_file.metadata()?.len();
+        let mut idx = 1u32;
+        loop {
+            let part = format!("{}.{:03}", self.base_path.display(), idx);
+            match fs::metadata(&part) {
+                Ok(m) => {
+                    total += m.len();
+                    idx += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        Ok(total)
     }
 }
 

@@ -46,14 +46,18 @@ fn main() -> std::io::Result<()> {
             let mut init = false;
             let pwd_ref = password.as_deref();
 
+            // `split` comes from the CLI in MB (see cli.rs). The library API
+            // `compress_file_with_progress` expects split_size in bytes, so we
+            // convert here. saturating_mul guards against absurd MB values.
+            let split_bytes = (split as u64).saturating_mul(1024 * 1024) as usize;
+
             let stats = compress_file_with_progress(
-                &input, 
+                &input,
                 &out_file,
                 None, // metadata
                 pwd_ref, // password
                 level, // level
-                split, // split_size
-                0, // block_size (default handled in lib)
+                split_bytes, // split_size (bytes)
                 |processed, total| {
                     if !quiet {
                         if !init {
