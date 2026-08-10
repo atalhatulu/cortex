@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 /// folded into level 1; anything above 9 falls back to level-3 behavior.
 pub fn block_size_for_level(level: u8) -> usize {
     match level {
-        0..=1 => 1 * 1024 * 1024,
+        0..=1 => 1024 * 1024,
         2 => 4 * 1024 * 1024,
         3 => 16 * 1024 * 1024,
         4..=5 => 32 * 1024 * 1024,
@@ -190,7 +190,7 @@ pub fn decompress_file_with_progress<F>(
 where
     F: FnMut(usize, usize),
 {
-    use std::io::{Read, Write, Seek};
+    use std::io::{Read, Write};
     use split_io::SplitReader;
     
     let mut in_file = SplitReader::new(input)?;
@@ -341,7 +341,7 @@ where
 
     let elapsed = start.elapsed();
     Ok(Stats {
-        input_size: file_len as usize,
+        input_size: file_len,
         output_size: orig_len,
         elapsed,
         chunks: num_comp_chunks,
