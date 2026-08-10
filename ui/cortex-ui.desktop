@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Cortex
+Comment=Experimental extremely fast lossless data compressor
+Exec=cortex-ui %F
+Icon=archive
+Terminal=false
+Type=Application
+MimeType=application/x-cortex;
+Categories=Utility;Archiving;Compression;
