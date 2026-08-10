@@ -61,11 +61,35 @@ pub struct SplitReader {
     part_index: u32,
 }
 
+/// True when `name` looks like a split-volume suffix, e.g. `archive.crx.001`.
+fn is_split_part(name: &str) -> bool {
+    let b = name.as_bytes();
+    b.len() >= 4
+        && b[b.len() - 4] == b'.'
+        && b[b.len() - 3..].iter().all(|c| c.is_ascii_digit())
+}
+
 impl SplitReader {
+    /// Open an archive for reading, even when pointed at any one of its split
+    /// volumes (`archive.crx.001`, `archive.crx.002`, …).
+    ///
+    /// The header (magic bytes + metadata) lives only in the base file
+    /// (`archive.crx`), so a part-path is normalized to that base path. Reading
+    /// therefore always starts from the beginning and chains the parts in
+    /// order, no matter which volume the user handed us.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let current_file = File::open(&path)?;
+        let given = path.as_ref();
+        let base_path = match given.file_name().and_then(|s| s.to_str()) {
+            Some(name) if is_split_part(name) => {
+                // Drop the trailing ".NNN" (4 chars): archive.crx.001 -> archive.crx
+                let trimmed = &name[..name.len() - 4];
+                given.with_file_name(trimmed)
+            }
+            _ => given.to_path_buf(),
+        };
+        let current_file = File::open(&base_path)?;
         Ok(SplitReader {
-            base_path: path.as_ref().to_path_buf(),
+            base_path,
             current_file,
             part_index: 0,
         })
