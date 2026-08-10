@@ -1,5 +1,7 @@
 use crate::rangecoder::{Encoder, Decoder, PROB_MAX};
 
+/// Updates the probability model based on the given bit.
+/// Ensures the probability stays within the valid range.
 #[inline(always)]
 fn update_prob(prob: &mut u16, bit: u8) {
     let p = *prob as i32;
@@ -10,6 +12,8 @@ fn update_prob(prob: &mut u16, bit: u8) {
     *prob = new_p as u16;
 }
 
+/// The context mixing model for Move-To-Front (MTF) token probabilities.
+/// It uses two orders of context (order1 and order2) to predict the next bit.
 pub struct MtfModel {
     order1: Vec<u16>,
     order2: Vec<u16>,
@@ -22,7 +26,16 @@ impl MtfModel {
             order2: vec![PROB_MAX / 2; 4096 * 512],
         }
     }
+}
 
+impl Default for MtfModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MtfModel {
+    /// Encodes a sequence of MTF tokens into the arithmetic encoder `enc`.
     pub fn encode_tokens(&mut self, enc: &mut Encoder, tokens: &[u16]) {
         let mut prev1 = 0;
         let mut prev2 = 0;
@@ -50,6 +63,7 @@ impl MtfModel {
         }
     }
 
+    /// Decodes a sequence of MTF tokens from the arithmetic decoder `dec`.
     pub fn decode_tokens(&mut self, dec: &mut Decoder, len: usize) -> Result<Vec<u16>, std::io::Error> {
         let mut tokens = Vec::with_capacity(len);
         let mut prev1 = 0;
@@ -84,6 +98,9 @@ impl MtfModel {
     }
 }
 
+/// Performs Burrows-Wheeler Transform (BWT), then Move-To-Front (MTF) coding, 
+/// and finally Run-Length Encoding (RLE) on the chunk.
+/// Returns the primary index of the BWT and the resulting RLE tokens.
 pub fn bwt_mtf_rle(chunk: &[u8]) -> (u32, Vec<u16>) {
     let n = chunk.len();
     let sa_obj = divsufsort::sort(chunk);
@@ -92,7 +109,7 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> (u32, Vec<u16>) {
     let mut bwt = vec![0u8; n];
     let mut pidx = 0u32;
     for i in 0..n {
-        let sa_i = sa[i] as i32;
+        let sa_i = sa[i];
         if sa_i == 0 {
             bwt[i] = chunk[n - 1];
             pidx = i as u32;
@@ -142,7 +159,8 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> (u32, Vec<u16>) {
     (pidx, rle_tokens)
 }
 
-pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize) -> Vec<u8> {
+/// Reverses the RLE, MTF, and BWT steps to recover the original data chunk.
+pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize) -> Result<Vec<u8>, std::io::Error> {
     let mut bwt = Vec::with_capacity(original_size);
     let mut state: [u8; 256] = std::array::from_fn(|i| i as u8);
     let mut zero_run = 0usize;
@@ -150,8 +168,16 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
 
     for &t in rle_tokens {
         if t <= 1 {
-            zero_run += (t as usize + 1) * zero_power;
-            zero_power <<= 1;
+            let add_val = (t as usize + 1).checked_mul(zero_power)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow"))?;
+            zero_run = zero_run.checked_add(add_val)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow"))?;
+            zero_power = zero_power.checked_shl(1)
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow"))?;
+            
+            if bwt.len() + zero_run > original_size {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE exceeds chunk size"));
+            }
         } else {
             if zero_run > 0 {
                 let count = zero_run;
@@ -164,9 +190,15 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
             }
 
             let idx = (t - 1) as usize;
+            if idx > 255 {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid MTF token"));
+            }
             let val = state[idx];
             state.copy_within(0..idx, 1);
             state[0] = val;
+            if bwt.len() + 1 > original_size {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk exceeds original size"));
+            }
             bwt.push(val);
         }
     }
@@ -180,7 +212,12 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
     }
 
     let n = bwt.len();
-    assert_eq!(n, original_size);
+    if n != original_size {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Decoded data length mismatch"));
+    }
+    if pidx >= n {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid pidx"));
+    }
 
     let mut counts = [0usize; 256];
     for &b in &bwt { counts[b as usize] += 1; }
@@ -211,5 +248,5 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
         p = t_arr[p];
     }
 
-    chunk_out
+    Ok(chunk_out)
 }

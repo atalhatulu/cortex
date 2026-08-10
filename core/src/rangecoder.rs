@@ -33,7 +33,15 @@ impl Encoder {
             out: Vec::new(),
         }
     }
+}
 
+impl Default for Encoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Encoder {
     fn shift_low(&mut self) {
         if (self.low as u32) < 0xFF00_0000 || (self.low >> 32) != 0 {
             let carry = (self.low >> 32) as u8;
