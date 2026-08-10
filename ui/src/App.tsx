@@ -109,7 +109,7 @@ function App() {
             setStatusMessage('Extracting with CORTEX...');
             setProgress({ processed: 0, total: 100, is_compressing: false });
             
-            const defaultOutDir = path.replace('.crx.001', '_restored').replace('.crx', '_restored');
+            const defaultOutDir = path.replace(/\.crx(\.\d{3})?$/, '_restored');
             try {
               const res = await invoke<string>('decompress_cmd', { 
                   inputPath: path, 
@@ -278,7 +278,7 @@ function App() {
     setTimeRemaining('');
 
     try {
-      const defaultOutDir = archivePath.replace('.crx.001', '_restored').replace('.crx', '_restored');
+      const defaultOutDir = archivePath.replace(/\.crx(\.\d{3})?$/, '_restored');
       const outPath = await save({ defaultPath: defaultOutDir });
       if (outPath) {
         const res = await invoke<string>('decompress_cmd', { 
@@ -314,15 +314,7 @@ function App() {
 
   return (
     <div className="cortex-app">
-      {/* BRAND BAR — add data-tauri-drag-region here if using a custom Tauri titlebar */}
-      <div className="brand-bar">
-        <span className="brand-mark">CORTEX<span>.</span></span>
-        <span className="brand-tag">Archive Engine</span>
-        <div className="brand-status">
-          <span className={`dot ${isProcessing ? 'busy' : ''}`}></span>
-          {isProcessing ? 'Working' : 'Ready'}
-        </div>
-      </div>
+
 
       {/* TOOLBAR */}
       <div className="toolbar">
@@ -345,6 +337,11 @@ function App() {
         </button>
         
         <div style={{ flex: 1 }}></div>
+        
+        <div className="brand-status" style={{ border: 'none', background: 'transparent', paddingRight: '16px' }}>
+          <span className={`dot ${isProcessing ? 'busy' : ''}`}></span>
+          {isProcessing ? 'Working' : 'Ready'}
+        </div>
 
         <div className="settings-group">
           <select 
