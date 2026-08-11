@@ -75,56 +75,77 @@ function App() {
     async function checkCliArgs() {
       try {
         const args: string[] = await invoke('get_cli_args');
-        if (args.length >= 3) {
-          const action = args[1]; // compress or extract
-          const path = args[2];
-          
-          if (action === "compress") {
-            setIsProcessing(true);
-            setStatusMessage('Compressing with CORTEX...');
-            setProgress({ processed: 0, total: 100, is_compressing: true });
-            
-            const parent = await invoke<string>('get_parent_directory', { path });
-            const defaultName = path.split(/[\\/]/).pop() || "archive";
-            const defaultOut = `${parent}/${defaultName}.crx`;
-            
-            try {
-              const res = await invoke<string>('compress_cmd', { 
-                  inputPaths: [path], 
-                  outputPath: defaultOut,
-                  password: null,
-                  level: 3, 
-                  splitSize: 0
-              });
-              await message(res, { title: 'CORTEX', kind: 'info' });
-              await invoke('exit_app');
-            } catch (e: any) {
-                setStatusMessage(`Error: ${e}`);
-                await message(`Error: ${e}`, { title: 'Compression Failed', kind: 'error' });
-                setIsProcessing(false);
-            }
-            return; 
-          } else if (action === "extract") {
-            setIsProcessing(true);
-            setStatusMessage('Extracting with CORTEX...');
-            setProgress({ processed: 0, total: 100, is_compressing: false });
-            
-            const defaultOutDir = path.replace(/\.crx(\.\d{3})?$/, '_restored');
-            try {
-              const res = await invoke<string>('decompress_cmd', { 
-                  inputPath: path, 
-                  outputPath: defaultOutDir,
-                  password: null
-              });
-              await message(res, { title: 'CORTEX', kind: 'info' });
-              await invoke('exit_app');
-            } catch (e: any) {
-                setStatusMessage(`Error: ${e}`);
-                await message(`Error: ${e}`, { title: 'Decompression Failed', kind: 'error' });
-                setIsProcessing(false);
-            }
-            return;
+        const action = args.length >= 2 ? args[1] : '';
+        const firstTarget = args.length >= 3 ? args[2] : '';
+
+        if (args.length >= 3 && action === "compress") {
+          // `%F` can expand to multiple files — bundle them all into one archive.
+          const inputPaths = args.slice(2).filter((p) => !p.startsWith('-'));
+          const first = inputPaths[0];
+
+          setIsProcessing(true);
+          setStatusMessage('Compressing with CORTEX...');
+          setProgress({ processed: 0, total: 100, is_compressing: true });
+
+          const parent = await invoke<string>('get_parent_directory', { path: first });
+          const defaultName = first.split(/[\\/]/).pop() || "archive";
+          const defaultOut = `${parent}/${defaultName}.crx`;
+
+          try {
+            const res = await invoke<string>('compress_cmd', {
+                inputPaths,
+                outputPath: defaultOut,
+                password: null,
+                level: 3,
+                splitSize: 0
+            });
+            await message(res, { title: 'CORTEX', kind: 'info' });
+            await invoke('exit_app');
+          } catch (e: any) {
+              setStatusMessage(`Error: ${e}`);
+              await message(`Error: ${e}`, { title: 'Compression Failed', kind: 'error' });
+              setIsProcessing(false);
           }
+          return;
+        }
+
+        if (args.length >= 3 && action === "extract") {
+          const inputPath = firstTarget;
+          setIsProcessing(true);
+          setStatusMessage('Extracting with CORTEX...');
+          setProgress({ processed: 0, total: 100, is_compressing: false });
+
+          const defaultOutDir = inputPath.replace(/\.crx(\.\d{3})?$/, '_restored');
+          try {
+            const res = await invoke<string>('decompress_cmd', {
+                inputPath,
+                outputPath: defaultOutDir,
+                password: null
+            });
+            await message(res, { title: 'CORTEX', kind: 'info' });
+            await invoke('exit_app');
+          } catch (e: any) {
+              setStatusMessage(`Error: ${e}`);
+              await message(`Error: ${e}`, { title: 'Decompression Failed', kind: 'error' });
+              setIsProcessing(false);
+          }
+          return;
+        }
+
+        // `open` from a ServiceMenu / Nautilus script, or a bare path from
+        // double-clicking an archive, both mean "show this location": a .crx
+        // opens as a virtual folder via list_directory. Split volumes
+        // (archive.crx.001) are normalized to the base file so the lookup
+        // succeeds.
+        const openTarget = action === "open"
+          ? firstTarget
+          : (args.length === 2 && action && !['compress', 'extract', 'open'].includes(action) && !action.startsWith('-')
+              ? action
+              : '');
+        if (openTarget) {
+          const normalized = openTarget.replace(/\.crx\.\d{3}$/i, '.crx');
+          await loadDirectory(normalized);
+          return;
         }
       } catch (e) {
         console.error(e);

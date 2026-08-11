@@ -108,6 +108,33 @@ fn exit_app() {
 }
 
 #[tauri::command]
+fn minimize_window(app_handle: tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.minimize();
+    }
+}
+
+#[tauri::command]
+fn toggle_maximize_window(app_handle: tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app_handle.get_webview_window("main") {
+        if let Ok(true) = window.is_maximized() {
+            let _ = window.unmaximize();
+        } else {
+            let _ = window.maximize();
+        }
+    }
+}
+
+#[tauri::command]
+fn send_notification(title: String, body: String) {
+    let _ = std::process::Command::new("notify-send")
+        .args(["-a", "Cortex", "-i", "archive", &title, &body])
+        .spawn();
+}
+
+#[tauri::command]
 async fn compress_cmd(app: AppHandle, input_paths: Vec<String>, output_path: String, password: Option<String>, level: u8, split_size: usize) -> Result<String, String> {
     let start = Instant::now();
     let temp_tar_path = format!("{}.tmp.tar", output_path);
@@ -164,16 +191,20 @@ async fn compress_cmd(app: AppHandle, input_paths: Vec<String>, output_path: Str
     
     let res = std::thread::spawn(move || {
         let pwd_ref = pwd_clone.as_deref();
-        cortex::compress_file_with_progress(&temp_tar_clone, &out_clone, Some(&meta_json), pwd_ref, level, split_size, 16 * 1024 * 1024, |processed, total| {
+        // Block size is derived from `level` inside the library
+        // (`block_size_for_level`), the single source of truth.
+        cortex::compress_file_with_progress(&temp_tar_clone, &out_clone, Some(&meta_json), pwd_ref, level, split_size, |processed, total| {
             let _ = app.emit("progress", ProgressPayload {
                 processed,
                 total,
                 is_compressing: true,
             });
         })
-    }).join().map_err(|_| "Thread panic".to_string())?;
+    }).join();
     
     let _ = fs::remove_file(&temp_tar_path);
+
+    let res = res.map_err(|_| "Thread panic".to_string())?;
     
     match res {
         Ok(stats) => {
@@ -229,16 +260,40 @@ async fn decompress_cmd(app: AppHandle, input_path: String, output_path: String,
     }
 }
 
+#[tauri::command]
+async fn read_metadata_cmd(input_path: String) -> Result<String, String> {
+    match cortex::read_metadata(&input_path) {
+        Ok(Some(data)) => {
+            String::from_utf8(data).map_err(|e| format!("Invalid UTF-8 in metadata: {}", e))
+        }
+        Ok(None) => Err("No metadata found in this archive".to_string()),
+        Err(e) => Err(format!("Failed to read metadata: {}", e))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
+      use tauri::Manager;
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
             .level(log::LevelFilter::Info)
             .build(),
         )?;
+      }
+      
+      let args: Vec<String> = std::env::args().collect();
+      
+      if args.len() >= 3 {
+          let action_arg = &args[1];
+          if action_arg == "compress" || action_arg == "extract" {
+              let action_msg = if action_arg == "compress" { "Sıkıştırılıyor..." } else { "Çıkartılıyor..." };
+              let _ = std::process::Command::new("notify-send")
+                  .args(["-a", "Cortex", "-i", "archive", "Cortex Archiver", action_msg])
+                  .spawn();
+          }
       }
       Ok(())
     })
@@ -249,7 +304,11 @@ pub fn run() {
         list_directory, 
         get_parent_directory,
         get_cli_args,
-        exit_app
+        exit_app,
+        send_notification,
+        read_metadata_cmd,
+        minimize_window,
+        toggle_maximize_window
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
