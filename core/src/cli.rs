@@ -59,4 +59,9 @@ pub enum Commands {
         #[arg(short, long, default_value_t = false)]
         verbose: bool,
     },
+    /// Show archive header information
+    Info {
+        /// The input .crx file to inspect
+        input: String,
+    },
 }

@@ -14,6 +14,18 @@ fn setup_threads(threads: usize) {
     }
 }
 
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.2} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / 1048576.0)
+    } else {
+        format!("{:.2} GB", bytes as f64 / 1073741824.0)
+    }
+}
+
 fn check_force(out_file: &str, force: bool) -> std::io::Result<()> {
     if !force && Path::new(out_file).exists() {
         return Err(std::io::Error::new(
@@ -174,6 +186,62 @@ fn main() -> std::io::Result<()> {
                     );
                 }
             }
+        }
+        Commands::Info { input } => {
+            use std::io::Read;
+
+            let mut file = cortex::split_io::SplitReader::new(&input)?;
+
+            let mut header = [0u8; 17];
+            file.read_exact(&mut header)?;
+
+            let is_ctx6 = &header[0..4] == b"CTX6";
+            let is_ctx5 = &header[0..4] == b"CTX5";
+            let is_ctx4 = &header[0..4] == b"CTX4";
+
+            if !is_ctx6 && !is_ctx5 && !is_ctx4 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid or outdated magic bytes",
+                ));
+            }
+
+            let format = if is_ctx6 {
+                "CTX6"
+            } else if is_ctx5 {
+                "CTX5"
+            } else {
+                "CTX4"
+            };
+
+            let mut len_bytes = [0u8; 8];
+            len_bytes.copy_from_slice(&header[4..12]);
+            let orig_len = u64::from_le_bytes(len_bytes);
+
+            let flags = header[12];
+            let encrypted = (flags & 1) == 1;
+
+            let mut bs_bytes = [0u8; 4];
+            bs_bytes.copy_from_slice(&header[13..17]);
+            let block_size = u32::from_le_bytes(bs_bytes) as u64;
+
+            let mut meta_len: u64 = 0;
+            if is_ctx5 || is_ctx6 {
+                let mut ml_bytes = [0u8; 4];
+                file.read_exact(&mut ml_bytes)?;
+                meta_len = u32::from_le_bytes(ml_bytes) as u64;
+            }
+
+            if is_ctx6 && encrypted {
+                let mut salt_nonce = [0u8; 28]; // salt + nonce
+                file.read_exact(&mut salt_nonce)?;
+            }
+
+            println!("Format:        {}", format);
+            println!("Encrypted:     {}", if encrypted { "yes" } else { "no" });
+            println!("Original size: {} bytes ({})", orig_len, format_bytes(orig_len));
+            println!("Block size:    {} bytes ({})", block_size, format_bytes(block_size));
+            println!("Metadata:      {} bytes", meta_len);
         }
     }
 

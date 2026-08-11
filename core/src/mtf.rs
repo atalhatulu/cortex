@@ -120,14 +120,14 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> (u32, Vec<u16>) {
 
     // Pure MTF + RLE
     let mut state: [u8; 256] = std::array::from_fn(|i| i as u8);
+    // Value → position inverse table: positions[v] is the index of `v` inside
+    // `state`, so finding a byte's MTF index is O(1) instead of a linear scan.
+    let mut positions: [u8; 256] = std::array::from_fn(|i| i as u8);
     let mut rle_tokens = Vec::with_capacity(n / 2);
     let mut zero_run = 0usize;
 
     for &b in &bwt {
-        let mut idx = 0;
-        while state[idx] != b {
-            idx += 1;
-        }
+        let idx = positions[b as usize] as usize;
 
         if idx == 0 {
             zero_run += 1;
@@ -145,6 +145,12 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> (u32, Vec<u16>) {
             let val = state[idx];
             state.copy_within(0..idx, 1);
             state[0] = val;
+            // The move-to-front shifts state[0..idx] up to positions 1..=idx
+            // and brings `val` to the front; mirror that in `positions`.
+            positions[val as usize] = 0;
+            for p in 1..=idx {
+                positions[state[p] as usize] = p as u8;
+            }
         }
     }
 
