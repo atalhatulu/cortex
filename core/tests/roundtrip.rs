@@ -7,18 +7,14 @@ use std::fs;
 
 fn test_roundtrip(data: &[u8]) {
     if data.is_empty() {
-        // The BWT inverse has no valid primary index for a zero-length block
-        // (pidx == 0 >= n == 0), so a byte-exact roundtrip is impossible.
-        // Exercise what is well-defined instead of silently skipping empty
-        // input: the encode side must yield pidx == 0 with no tokens, and the
-        // decode entry point must reject the block rather than corrupt it.
+        // Empty block contract: encode yields pidx == 0 with no tokens, and
+        // decode must return an empty output (Ok(vec![])) — a real byte-exact
+        // roundtrip for the empty input, not a rejection.
         let (pidx, tokens) = bwt_mtf_rle(data);
         assert_eq!(pidx, 0, "empty input must yield primary index 0");
         assert!(tokens.is_empty(), "empty input must yield no RLE tokens");
-        assert!(
-            decode_rle_mtf_bwt(pidx as usize, &tokens, data.len()).is_err(),
-            "decode must reject an empty BWT block"
-        );
+        let out = decode_rle_mtf_bwt(pidx as usize, &tokens, data.len()).unwrap();
+        assert!(out.is_empty(), "empty block must decode to empty output");
         return;
     }
     let (pidx, tokens) = bwt_mtf_rle(data);

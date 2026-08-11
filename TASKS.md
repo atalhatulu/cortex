@@ -30,3 +30,24 @@ SİLME veya imzalarını bozma (hepsi #![test] fonksiyonu). `use cortex::...`
 importlarını gerekirse güncelle. Derlenebilir ve geçebilir olmalı.
 
 Milestone: cargo test --manifest-path core/Cargo.toml --test roundtrip
+
+---
+
+### core/src/mtf.rs -> FCC-CLAUDE
+Boş (0-byte) veri desteği. Şu an `decode_rle_mtf_bwt(0, &[], 0)` hata döndürüyor
+(pidx >= n kontrolü); `core/tests/roundtrip.rs` artık boş bloğun Ok(vec![])
+döndürmesini bekliyor (test beklentisi güncellendi — "decode must reject"
+kaldırıldı, "decode must return empty" geldi). Amaç: boş girdide tam byte-exact
+roundtrip: `bwt_mtf_rle([])` -> (pidx=0, []) (mevcut davranış), ardından
+`decode_rle_mtf_bwt(0, &[], 0)` -> Ok(vec![]).
+
+DİKKAT: Diğer tüm davranışları aynen koru — 11 diğer roundtrip testi ve
+mevcut tüm unit testler yeşil kalmalı. SADECE boş-blok dalını düzelt
+(örn. `n == 0 && original_size == 0` durumunda erken Ok(vec![]) dönüşü gibi).
+Guardrail'leri atlama (RLE/MTF token doğrulamaları, uzunluk uyumsuzluğu
+kontrolleri aynen kalsın).
+
+KURALLAR: SADECE core/src/mtf.rs dosyasını yaz. Diğer dosyalara dokunma,
+commit yapma. Derlenebilir ve tüm testler geçebilir olmalı.
+
+Milestone: cargo test --manifest-path core/Cargo.toml --test roundtrip

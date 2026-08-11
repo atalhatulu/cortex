@@ -215,6 +215,13 @@ pub fn decode_rle_mtf_bwt(pidx: usize, rle_tokens: &[u16], original_size: usize)
     if n != original_size {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Decoded data length mismatch"));
     }
+    // Empty block: `bwt_mtf_rle([])` yields pidx == 0 and no tokens, so the
+    // matching decode must return an empty output rather than tripping the
+    // pidx guard (which would reject 0 >= 0). At this point n == original_size
+    // (the length-mismatch check above passed), so n == 0 is the empty block.
+    if n == 0 && original_size == 0 {
+        return Ok(vec![]);
+    }
     if pidx >= n {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid pidx"));
     }
