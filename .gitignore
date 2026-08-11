@@ -16,3 +16,4 @@ enwik8.zip
 **/*.rs.bk
 *.swp
 *~
+logs/
