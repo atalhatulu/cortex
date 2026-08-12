@@ -8,7 +8,10 @@ use std::path::Path;
 
 fn setup_threads(threads: usize) {
     if threads > 0 {
-        if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global() {
+        if let Err(e) = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+        {
             eprintln!("Warning: Failed to set thread pool size: {}", e);
         }
     }
@@ -30,7 +33,10 @@ fn check_force(out_file: &str, force: bool) -> std::io::Result<()> {
     if !force && Path::new(out_file).exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("Output file '{}' already exists. Use --force to overwrite.", out_file)
+            format!(
+                "Output file '{}' already exists. Use --force to overwrite.",
+                out_file
+            ),
         ));
     }
     Ok(())
@@ -40,11 +46,22 @@ fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compress { input, output, level, password, split, threads, force, quiet, verbose, fast } => {
+        Commands::Compress {
+            input,
+            output,
+            level,
+            password,
+            split,
+            threads,
+            force,
+            quiet,
+            verbose,
+            fast,
+        } => {
             setup_threads(threads);
             let out_file = output.unwrap_or_else(|| format!("{}.ctx", input));
             check_force(&out_file, force)?;
-            
+
             let pb = if quiet {
                 ProgressBar::hidden()
             } else {
@@ -54,7 +71,7 @@ fn main() -> std::io::Result<()> {
                     .progress_chars("#>-"));
                 p
             };
-            
+
             let mut init = false;
             let pwd_ref = password.as_deref();
 
@@ -66,11 +83,11 @@ fn main() -> std::io::Result<()> {
             let stats = compress_file_with_progress(
                 &input,
                 &out_file,
-                None, // metadata
-                pwd_ref, // password
-                level, // level
+                None,        // metadata
+                pwd_ref,     // password
+                level,       // level
                 split_bytes, // split_size (bytes)
-                fast, // fast mode
+                fast,        // fast mode
                 |processed, total| {
                     if !quiet {
                         if !init {
@@ -79,16 +96,17 @@ fn main() -> std::io::Result<()> {
                         }
                         pb.set_position(processed as u64);
                     }
-                }
+                },
             )?;
-            
+
             if !quiet {
                 pb.finish_and_clear();
             }
-            
+
             if !quiet || verbose {
                 let ratio = stats.output_size as f64 / stats.input_size.max(1) as f64 * 100.0;
-                let speed = stats.input_size as f64 / 1_000_000.0 / stats.elapsed.as_secs_f64().max(1e-9);
+                let speed =
+                    stats.input_size as f64 / 1_000_000.0 / stats.elapsed.as_secs_f64().max(1e-9);
                 if verbose {
                     println!("--- Cortex Compression Stats ---");
                     println!("Input:           {} bytes", stats.input_size);
@@ -100,17 +118,25 @@ fn main() -> std::io::Result<()> {
                 } else {
                     println!(
                         "compressed {} -> {} bytes ({:.2}%) in {:.2}s ({:.2} MB/s) using {} blocks",
-                             stats.input_size,
-                             stats.output_size,
-                             ratio,
-                             stats.elapsed.as_secs_f64(),
-                             speed,
-                             stats.chunks
+                        stats.input_size,
+                        stats.output_size,
+                        ratio,
+                        stats.elapsed.as_secs_f64(),
+                        speed,
+                        stats.chunks
                     );
                 }
             }
         }
-        Commands::Decompress { input, output, password, threads, force, quiet, verbose } => {
+        Commands::Decompress {
+            input,
+            output,
+            password,
+            threads,
+            force,
+            quiet,
+            verbose,
+        } => {
             setup_threads(threads);
             let out_file = output.unwrap_or_else(|| {
                 let mut stem = input.to_string();
@@ -119,7 +145,9 @@ fn main() -> std::io::Result<()> {
                 // to its base name so restore produces the original filename.
                 if stem.len() >= 4
                     && stem.as_bytes()[stem.len() - 4] == b'.'
-                    && stem.as_bytes()[stem.len() - 3..].iter().all(u8::is_ascii_digit)
+                    && stem.as_bytes()[stem.len() - 3..]
+                        .iter()
+                        .all(u8::is_ascii_digit)
                 {
                     stem.truncate(stem.len() - 4);
                     changed = true;
@@ -135,7 +163,7 @@ fn main() -> std::io::Result<()> {
                 }
             });
             check_force(&out_file, force)?;
-            
+
             let pb = if quiet {
                 ProgressBar::hidden()
             } else {
@@ -145,12 +173,12 @@ fn main() -> std::io::Result<()> {
                     .progress_chars("#>-"));
                 p
             };
-            
+
             let mut init = false;
             let pwd_ref = password.as_deref();
 
             let stats = decompress_file_with_progress(
-                &input, 
+                &input,
                 &out_file,
                 pwd_ref, // password
                 |processed, total| {
@@ -161,15 +189,16 @@ fn main() -> std::io::Result<()> {
                         }
                         pb.set_position(processed as u64);
                     }
-                }
+                },
             )?;
-            
+
             if !quiet {
                 pb.finish_and_clear();
             }
 
             if !quiet || verbose {
-                let speed = stats.output_size as f64 / 1_000_000.0 / stats.elapsed.as_secs_f64().max(1e-9);
+                let speed =
+                    stats.output_size as f64 / 1_000_000.0 / stats.elapsed.as_secs_f64().max(1e-9);
                 if verbose {
                     println!("--- Cortex Decompression Stats ---");
                     println!("Input:           {} bytes", stats.input_size);
@@ -186,10 +215,20 @@ fn main() -> std::io::Result<()> {
                         stats.chunks
                     );
 
-                    let entropy_s = cortex::mtf::PROF_ENTROPY.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
-                    let mtf_rle_s = cortex::mtf::PROF_MTF_RLE.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
-                    let tarr_s = cortex::mtf::PROF_INV_BWT_TARR.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
-                    let invbwt_s = cortex::mtf::PROF_INV_BWT_TRAVERSAL.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
+                    let entropy_s =
+                        cortex::mtf::PROF_ENTROPY.load(std::sync::atomic::Ordering::Relaxed) as f64
+                            / 1e9;
+                    let mtf_rle_s =
+                        cortex::mtf::PROF_MTF_RLE.load(std::sync::atomic::Ordering::Relaxed) as f64
+                            / 1e9;
+                    let tarr_s = cortex::mtf::PROF_INV_BWT_TARR
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        as f64
+                        / 1e9;
+                    let invbwt_s = cortex::mtf::PROF_INV_BWT_TRAVERSAL
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        as f64
+                        / 1e9;
                     let sum = entropy_s + mtf_rle_s + tarr_s + invbwt_s;
                     println!("\n========================================");
                     println!("CORTEX DECODE PROFILE (Sum across threads)");
@@ -255,8 +294,16 @@ fn main() -> std::io::Result<()> {
 
             println!("Format:        {}", format);
             println!("Encrypted:     {}", if encrypted { "yes" } else { "no" });
-            println!("Original size: {} bytes ({})", orig_len, format_bytes(orig_len));
-            println!("Block size:    {} bytes ({})", block_size, format_bytes(block_size));
+            println!(
+                "Original size: {} bytes ({})",
+                orig_len,
+                format_bytes(orig_len)
+            );
+            println!(
+                "Block size:    {} bytes ({})",
+                block_size,
+                format_bytes(block_size)
+            );
             println!("Metadata:      {} bytes", meta_len);
         }
         Commands::Test { input } => {
@@ -265,8 +312,8 @@ fn main() -> std::io::Result<()> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos())
                 .unwrap_or(0);
-            let tmp_dir = std::env::temp_dir()
-                .join(format!("cortex-test-{}-{}", std::process::id(), nanos));
+            let tmp_dir =
+                std::env::temp_dir().join(format!("cortex-test-{}-{}", std::process::id(), nanos));
             std::fs::create_dir_all(&tmp_dir)?;
             let crx_path = tmp_dir.join("test.ctx");
             let out_path = tmp_dir.join("test.out");
@@ -300,7 +347,11 @@ fn main() -> std::io::Result<()> {
                         Ok(false)
                     }
                     None => {
-                        println!("PASS: {} roundtripped byte-exact ({} bytes)", input, orig.len());
+                        println!(
+                            "PASS: {} roundtripped byte-exact ({} bytes)",
+                            input,
+                            orig.len()
+                        );
                         Ok(true)
                     }
                 }

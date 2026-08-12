@@ -66,10 +66,10 @@ impl Encoder {
     #[inline]
     pub fn encode_bit(&mut self, prob: &mut u16, bit: u8) {
         let bound = (self.range >> PROB_BITS) * (*prob as u32);
-        
+
         let bit_u64 = bit as u64;
         self.low += (bound as u64) * bit_u64;
-        
+
         let range_if_0 = bound;
         let range_if_1 = self.range - bound;
         self.range = if bit == 0 { range_if_0 } else { range_if_1 };
@@ -125,12 +125,20 @@ impl<'a> Decoder<'a> {
         if input.len() > 0 {
             unsafe { ptr = ptr.add(1) };
         }
-        
+
         for _ in 0..4 {
-            let b = if ptr < end { unsafe { let v = *ptr; ptr = ptr.add(1); v } } else { 0 };
+            let b = if ptr < end {
+                unsafe {
+                    let v = *ptr;
+                    ptr = ptr.add(1);
+                    v
+                }
+            } else {
+                0
+            };
             code = (code << 8) | (b as u32);
         }
-        
+
         Decoder {
             range: 0xFFFF_FFFF,
             code,
@@ -157,7 +165,7 @@ impl<'a> Decoder<'a> {
     pub fn decode_bit(&mut self, prob: &mut u16) -> u8 {
         let bound = (self.range >> PROB_BITS) * (*prob as u32);
         let bit = (self.code >= bound) as u8;
-        
+
         let bound_mask = (bit as u32).wrapping_neg();
         self.code -= bound & bound_mask;
         self.range = if bit == 0 { bound } else { self.range - bound };
@@ -214,7 +222,9 @@ mod tests {
 
     #[test]
     fn many_bits_roundtrip() {
-        let bits: Vec<u8> = (0..10_000).map(|i: u32| (i.wrapping_mul(2654435761u32) >> 20) as u8 & 1).collect();
+        let bits: Vec<u8> = (0..10_000)
+            .map(|i: u32| (i.wrapping_mul(2654435761u32) >> 20) as u8 & 1)
+            .collect();
         let mut prob = PROB_MAX / 2;
         let mut enc = Encoder::new();
         for &b in &bits {

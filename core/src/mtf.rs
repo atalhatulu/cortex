@@ -1,4 +1,4 @@
-use crate::rangecoder::{Encoder, Decoder, PROB_MAX};
+use crate::rangecoder::{Decoder, Encoder, PROB_MAX};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub static PROF_ENTROPY: AtomicU64 = AtomicU64::new(0);
@@ -53,7 +53,7 @@ impl MtfModel {
                 let p0 = self.order0[ctx] as u32;
                 let p1 = self.order1[idx1] as u32;
                 let p2 = self.order2[idx2] as u32;
-                
+
                 // Weights: O0=1, O1=3, O2=4 (Total 8)
                 let p_mix = ((p0 + p1 * 3 + p2 * 4) >> 3) as u16;
 
@@ -70,7 +70,11 @@ impl MtfModel {
         }
     }
 
-    pub fn decode_tokens(&mut self, dec: &mut Decoder, len: usize) -> Result<Vec<u16>, std::io::Error> {
+    pub fn decode_tokens(
+        &mut self,
+        dec: &mut Decoder,
+        len: usize,
+    ) -> Result<Vec<u16>, std::io::Error> {
         let t0 = std::time::Instant::now();
         let mut tokens = Vec::with_capacity(len);
         let mut prev1 = 0;
@@ -85,7 +89,7 @@ impl MtfModel {
                 let p0 = self.order0[ctx] as u32;
                 let p1 = self.order1[idx1] as u32;
                 let p2 = self.order2[idx2] as u32;
-                
+
                 let p_mix = ((p0 + p1 * 3 + p2 * 4) >> 3) as u16;
 
                 let bit = dec.decode_bit_fixed(p_mix);
@@ -98,7 +102,10 @@ impl MtfModel {
             }
             let t = (ctx - 512) as u16;
             if t > 256 {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Corrupt file: token out of bounds"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Corrupt file: token out of bounds",
+                ));
             }
             tokens.push(t);
             prev2 = prev1;
@@ -119,12 +126,12 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> ([u32; LANES], Vec<u16>) {
 
     let mut bwt = vec![0u8; n];
     let mut pidx = [0u32; LANES];
-    
+
     let mut lengths = [0usize; LANES];
     for i in 0..LANES {
         lengths[i] = n / LANES + if n % LANES > i { 1 } else { 0 };
     }
-    
+
     let mut t_starts = [0usize; LANES];
     t_starts[0] = 0;
     let mut current_t = n;
@@ -190,29 +197,39 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> ([u32; LANES], Vec<u16>) {
     (pidx, rle_tokens)
 }
 
-pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size: usize) -> Result<Vec<u8>, std::io::Error> {
+pub fn decode_rle_mtf_bwt(
+    pidx: [u32; LANES],
+    rle_tokens: &[u16],
+    original_size: usize,
+) -> Result<Vec<u8>, std::io::Error> {
     if original_size == 0 {
         return Ok(Vec::new());
     }
-    
+
     let t0 = std::time::Instant::now();
     let mut bwt = Vec::with_capacity(original_size);
     let mut state: [u8; 256] = std::array::from_fn(|i| i as u8);
-    
+
     let mut zero_run = 0usize;
     let mut zero_power = 1usize;
 
     for &t in rle_tokens {
         if t <= 1 {
-            let add_val = (t as usize + 1).checked_mul(zero_power)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow"))?;
-            zero_run = zero_run.checked_add(add_val)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow"))?;
-            zero_power = zero_power.checked_shl(1)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow"))?;
-            
+            let add_val = (t as usize + 1).checked_mul(zero_power).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow")
+            })?;
+            zero_run = zero_run.checked_add(add_val).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow")
+            })?;
+            zero_power = zero_power.checked_shl(1).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE overflow")
+            })?;
+
             if bwt.len() + zero_run > original_size {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "RLE exceeds chunk size"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "RLE exceeds chunk size",
+                ));
             }
         } else {
             if zero_run > 0 {
@@ -225,13 +242,19 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
 
             let idx = (t - 1) as usize;
             if idx > 255 {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid MTF token"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid MTF token",
+                ));
             }
             let val = state[idx];
             state.copy_within(0..idx, 1);
             state[0] = val;
             if bwt.len() + 1 > original_size {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk exceeds original size"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Chunk exceeds original size",
+                ));
             }
             bwt.push(val);
         }
@@ -245,16 +268,23 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
 
     let n = bwt.len();
     if n != original_size {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Decoded data length mismatch"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Decoded data length mismatch",
+        ));
     }
 
     PROF_MTF_RLE.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     let t1 = std::time::Instant::now();
 
-    if n == 0 { return Ok(bwt); }
+    if n == 0 {
+        return Ok(bwt);
+    }
 
     let mut counts = [0usize; 256];
-    for &b in &bwt { counts[b as usize] += 1; }
+    for &b in &bwt {
+        counts[b as usize] += 1;
+    }
 
     let mut start = [0usize; 256];
     let mut sum = 0;
@@ -264,7 +294,7 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
     }
 
     let mut t_arr = vec![0u64; n];
-    
+
     // BWT without EOF symbol requires `pidx` (which corresponds to sa_i == 0)
     // to be processed first for its character class so the LF mapping aligns correctly.
     let real_pidx = pidx[0] as usize;
@@ -274,7 +304,9 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
 
     unsafe {
         for j in 0..n {
-            if j == real_pidx { continue; }
+            if j == real_pidx {
+                continue;
+            }
             let b = *bwt.get_unchecked(j) as usize;
             *t_arr.get_unchecked_mut(j) = ((b as u64) << 32) | (*start.get_unchecked(b) as u64);
             *start.get_unchecked_mut(b) += 1;
@@ -291,7 +323,7 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
 
     let mut chunk_out = vec![0u8; n];
     let mut p = pidx;
-    
+
     let mut out_starts = [0usize; LANES];
     let mut current_out = n;
     for i in 0..LANES {
@@ -300,7 +332,7 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
     }
 
     let min_len = lengths[LANES - 1];
-    
+
     unsafe {
         for lane in 0..LANES {
             let mut rem = lengths[lane] - min_len;
@@ -323,7 +355,7 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
         let mut p5 = p[5] as usize;
         let mut p6 = p[6] as usize;
         let mut p7 = p[7] as usize;
-        
+
         let out0 = out_starts[0];
         let out1 = out_starts[1];
         let out2 = out_starts[2];
@@ -367,7 +399,7 @@ pub fn decode_rle_mtf_bwt(pidx: [u32; LANES], rle_tokens: &[u16], original_size:
             p7 = (v7 & 0xFFFF_FFFF) as usize;
         }
     }
-    
+
     PROF_INV_BWT_TRAVERSAL.fetch_add(t2.elapsed().as_nanos() as u64, Ordering::Relaxed);
     Ok(chunk_out)
 }

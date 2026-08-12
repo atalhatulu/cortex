@@ -1,8 +1,8 @@
-pub mod rangecoder;
-pub mod mtf;
 pub mod crypto;
-pub mod split_io;
 pub mod filters;
+pub mod mtf;
+pub mod rangecoder;
+pub mod split_io;
 
 pub const MAGIC: &[u8; 4] = b"CTX8";
 pub const MAGIC_FAST: &[u8; 4] = b"CTXF";
@@ -32,10 +32,10 @@ fn get_available_memory_mb() -> Option<usize> {
 
 fn batch_size_for(block_size: usize, _multiplier: usize) -> usize {
     let t = num_cpus::get();
-    
+
     // Each block uses approx: block_size * 6 (SA + BWT)
     let memory_per_block_mb = (block_size * 6) / (1024 * 1024);
-    
+
     if let Some(avail_mb) = get_available_memory_mb() {
         // Leave 500MB headroom
         let safe_mb = avail_mb.saturating_sub(500);
@@ -68,8 +68,6 @@ pub fn block_size_for_level(level: u8) -> usize {
     }
 }
 
-
-
 pub struct Stats {
     pub input_size: usize,
     pub output_size: usize,
@@ -98,8 +96,8 @@ pub fn compress_file_with_progress<F>(
 where
     F: FnMut(usize, usize),
 {
-    use std::io::{Read, Write};
     use split_io::SplitWriter;
+    use std::io::{Read, Write};
 
     let mut in_file = fs::File::open(input)?;
     let start = Instant::now();
@@ -129,7 +127,7 @@ where
 
     let meta_len = _metadata.map(|m| m.len() as u32).unwrap_or(0);
     out_file.write_all(&meta_len.to_le_bytes())?;
-    
+
     let mut crypto_info = None;
     if encrypted {
         let (salt, nonce) = crypto::generate_salt_and_nonce();
@@ -155,13 +153,19 @@ where
             let mut bytes_read = 0;
             while bytes_read < block_size_actual {
                 let n = in_file.read(&mut buf[bytes_read..])?;
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 bytes_read += n;
             }
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 {
+                break;
+            }
             buf.truncate(bytes_read);
             batch_data.push(buf);
-            if bytes_read < block_size_actual { break; }
+            if bytes_read < block_size_actual {
+                break;
+            }
         }
 
         if batch_data.is_empty() {
@@ -171,37 +175,40 @@ where
         num_chunks += batch_data.len();
         let batch_processed: usize = batch_data.iter().map(|b| b.len()).sum();
 
-        let compressed_batch: Vec<Vec<u8>> = batch_data.par_iter().map(|chunk_in| {
-            if fast {
-                zstd::encode_all(chunk_in.as_slice(), 3).unwrap()
-            } else {
-                let mut chunk = chunk_in.clone();
-                let is_exec = filters::is_executable(&chunk);
-                if is_exec {
-                    filters::e8e9_filter(&mut chunk, true);
+        let compressed_batch: Vec<Vec<u8>> = batch_data
+            .par_iter()
+            .map(|chunk_in| {
+                if fast {
+                    zstd::encode_all(chunk_in.as_slice(), 3).unwrap()
+                } else {
+                    let mut chunk = chunk_in.clone();
+                    let is_exec = filters::is_executable(&chunk);
+                    if is_exec {
+                        filters::e8e9_filter(&mut chunk, true);
+                    }
+
+                    let (pidx, tokens) = mtf::bwt_mtf_rle(&chunk);
+                    let mut num_tokens = tokens.len() as u32;
+                    if is_exec {
+                        num_tokens |= 1 << 31;
+                    }
+
+                    let mut enc = rangecoder::Encoder::new();
+                    let mut model = mtf::MtfModel::new();
+                    model.encode_tokens(&mut enc, &tokens);
+                    let mut out = enc.finish();
+
+                    let mut final_out = Vec::with_capacity(36 + out.len());
+                    for i in 0..mtf::LANES {
+                        final_out.extend_from_slice(&pidx[i].to_le_bytes());
+                    }
+                    final_out.extend_from_slice(&num_tokens.to_le_bytes());
+                    final_out.append(&mut out);
+
+                    final_out
                 }
-
-                let (pidx, tokens) = mtf::bwt_mtf_rle(&chunk);
-                let mut num_tokens = tokens.len() as u32;
-                if is_exec {
-                    num_tokens |= 1 << 31;
-                }
-
-                let mut enc = rangecoder::Encoder::new();
-                let mut model = mtf::MtfModel::new();
-                model.encode_tokens(&mut enc, &tokens);
-                let mut out = enc.finish();
-
-                let mut final_out = Vec::with_capacity(36 + out.len());
-                for i in 0..mtf::LANES {
-                    final_out.extend_from_slice(&pidx[i].to_le_bytes());
-                }
-                final_out.extend_from_slice(&num_tokens.to_le_bytes());
-                final_out.append(&mut out);
-
-                final_out
-            }
-        }).collect();
+            })
+            .collect();
 
         for block in compressed_batch {
             let block_to_write = if let Some((ref key, ref base_nonce)) = crypto_info {
@@ -238,14 +245,14 @@ pub fn decompress_file_with_progress<F>(
 where
     F: FnMut(usize, usize),
 {
-    use std::io::{Read, Write};
     use split_io::SplitReader;
-    
+    use std::io::{Read, Write};
+
     let mut in_file = SplitReader::new(input)?;
     // Report the real archive size (all split volumes combined) so stats are
     // truthful. Only used for reporting — never for decode correctness.
     let file_len = in_file.total_size()? as usize;
-    
+
     let mut header = [0u8; 17];
     in_file.read_exact(&mut header)?;
 
@@ -253,7 +260,10 @@ where
     let is_fast = &header[0..4] == MAGIC_FAST;
 
     if !is_ctx8 && !is_fast {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Not a valid Cortex archive"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Not a valid Cortex archive",
+        ));
     }
 
     let mut len_bytes = [0u8; 8];
@@ -267,7 +277,10 @@ where
     bs_bytes.copy_from_slice(&header[13..17]);
     let block_size = u32::from_le_bytes(bs_bytes) as usize;
     if block_size == 0 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Block size cannot be zero"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Block size cannot be zero",
+        ));
     }
 
     let mut ml_bytes = [0u8; 4];
@@ -277,13 +290,16 @@ where
     let mut crypto_info = None;
     if encrypted {
         if _password.is_none() || _password.unwrap().is_empty() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Password required"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Password required",
+            ));
         }
         let mut salt = [0u8; crypto::SALT_LEN];
         let mut nonce = [0u8; crypto::NONCE_LEN];
         in_file.read_exact(&mut salt)?;
         in_file.read_exact(&mut nonce)?;
-        
+
         let key = crypto::derive_key(_password.unwrap(), &salt);
         crypto_info = Some((key, nonce));
     }
@@ -322,7 +338,10 @@ where
 
             batch_comp_chunks.push(comp_data);
 
-            let exp_size = std::cmp::min(block_size, orig_len.saturating_sub(chunks_read_total * block_size));
+            let exp_size = std::cmp::min(
+                block_size,
+                orig_len.saturating_sub(chunks_read_total * block_size),
+            );
             batch_orig_sizes.push(exp_size);
             chunks_read_total += 1;
         }
@@ -333,66 +352,77 @@ where
 
         num_comp_chunks += batch_comp_chunks.len();
 
-        let batch_indices: Vec<u64> = (global_chunk_idx .. global_chunk_idx + batch_comp_chunks.len() as u64).collect();
+        let batch_indices: Vec<u64> =
+            (global_chunk_idx..global_chunk_idx + batch_comp_chunks.len() as u64).collect();
         global_chunk_idx += batch_comp_chunks.len() as u64;
-        
+
         let crypto_ref = crypto_info.as_ref(); // Safe reference for Rayon
 
-        let decompressed_batch: Vec<std::io::Result<Vec<u8>>> = batch_comp_chunks.into_par_iter()
+        let decompressed_batch: Vec<std::io::Result<Vec<u8>>> = batch_comp_chunks
+            .into_par_iter()
             .zip(batch_orig_sizes.into_par_iter())
             .zip(batch_indices.into_par_iter())
             .map(|((mut chunk, size), chunk_idx)| {
-            
-            if let Some((key, base_nonce)) = crypto_ref {
-                chunk = match crypto::decrypt_chunk(key, base_nonce, chunk_idx, &chunk) {
-                    Ok(d) => d,
-                    Err(e) => return Err(e),
-                };
-            }
+                if let Some((key, base_nonce)) = crypto_ref {
+                    chunk = match crypto::decrypt_chunk(key, base_nonce, chunk_idx, &chunk) {
+                        Ok(d) => d,
+                        Err(e) => return Err(e),
+                    };
+                }
 
-            let decompressed = if is_fast {
-                match zstd::decode_all(chunk.as_slice()) {
-                    Ok(d) => d,
-                    Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Zstd Decompression error: {:?}", e))),
-                }
-            } else {
-                if chunk.len() < (mtf::LANES * 4) + 4 {
-                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk too small for headers"));
-                }
-                let mut pidx = [0u32; mtf::LANES];
-                let mut ptr = 0;
-                for i in 0..mtf::LANES {
-                    pidx[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
+                let decompressed = if is_fast {
+                    match zstd::decode_all(chunk.as_slice()) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("Zstd Decompression error: {:?}", e),
+                            ))
+                        }
+                    }
+                } else {
+                    if chunk.len() < (mtf::LANES * 4) + 4 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Chunk too small for headers",
+                        ));
+                    }
+                    let mut pidx = [0u32; mtf::LANES];
+                    let mut ptr = 0;
+                    for i in 0..mtf::LANES {
+                        pidx[i] = u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
+                        ptr += 4;
+                    }
+                    let mut num_tokens =
+                        u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
                     ptr += 4;
-                }
-                let mut num_tokens = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
-                ptr += 4;
-                
-                let is_exec = (num_tokens & (1 << 31)) != 0;
-                num_tokens &= !(1 << 31);
 
-                let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
-                let mut model = mtf::MtfModel::new();
+                    let is_exec = (num_tokens & (1 << 31)) != 0;
+                    num_tokens &= !(1 << 31);
 
-                let tokens = match model.decode_tokens(&mut dec, num_tokens as usize) {
-                    Ok(t) => t,
-                    Err(e) => return Err(e),
+                    let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
+                    let mut model = mtf::MtfModel::new();
+
+                    let tokens = match model.decode_tokens(&mut dec, num_tokens as usize) {
+                        Ok(t) => t,
+                        Err(e) => return Err(e),
+                    };
+
+                    let mut block = match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
+                        Ok(d) => d,
+                        Err(e) => return Err(e),
+                    };
+
+                    if is_exec {
+                        filters::e8e9_filter(&mut block, false);
+                    }
+
+                    block
                 };
 
-                let mut block = match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
-                    Ok(d) => d,
-                    Err(e) => return Err(e),
-                };
-                
-                if is_exec {
-                    filters::e8e9_filter(&mut block, false);
-                }
-                
-                block
-            };
-
-            Ok(decompressed)
-        }).collect();
+                Ok(decompressed)
+            })
+            .collect();
 
         for res in decompressed_batch {
             let block = res?;
@@ -413,19 +443,19 @@ where
 }
 
 pub fn read_metadata(input: &str) -> std::io::Result<Option<Vec<u8>>> {
-    use std::io::Read;
     use split_io::SplitReader;
-    
+    use std::io::Read;
+
     let mut f = SplitReader::new(input)?;
     let mut header = [0u8; 17];
     let n = f.read(&mut header)?;
     if n < 17 {
         return Ok(None);
     }
-    
+
     let is_ctx8 = &header[0..4] == MAGIC;
     let is_fast = &header[0..4] == MAGIC_FAST;
-    
+
     if !is_ctx8 && !is_fast {
         return Ok(None);
     }
