@@ -4,59 +4,47 @@
 
 ---
 
-### core/src/cli.rs + core/src/main.rs -> FCC-CLAUDE
+## GÖREV A — `test` komutu: ✅ TAMAMLANDI (zaten implemente edilmişti)
 
-Yeni `test` alt komutu: bir dosyayı sıkıştırıp geri açarak roundtrip'i
-byte-exact doğrulama modu. Amaç hızlı bütünlük kontrolü.
+`cortex test <input>` komutu `core/src/cli.rs` + `core/src/main.rs` içinde **zaten tam ve spec'e uygun** olarak mevcuttu.
 
-API SÖZLEŞMESİ (BİREBİR):
-- Komut: `cortex test <input>`
-- `core/src/cli.rs`: `Commands::Test { input: String }` varyantı ekle
-  (clap derive; açıklama: "Verify a file survives a compress/decompress roundtrip").
-- `core/src/main.rs` `Commands::Test` kolunda:
-  - Geçici dizin kullan (std::env::temp_dir + process id + rastgele ek).
-  - `compress_file(input, tmp.ctx)` sonra `decompress_file(tmp.ctx, tmp.out)` çağır.
-  - İki dosyayı `fs::read` ile karşılaştır (akıllıca: boyut farkıysa erken fail).
-  - Başarı: `PASS: <input> roundtripped byte-exact (<n> bytes)` (exit 0).
-  - Fark varsa: `FAIL: <input> differs after roundtrip` + `cmp` benzeri ilk fark
-    ofsetini ve exit code 1 döndür.
-  - Geçici dosyaları HER DURUMDA temizle (ok, fail, hata).
-- Mevcut `Info`/`Compress`/`Decompress` kollarına dokunma; `Info` koluna yeni
-  alan EKLEME.
+- `Commands::Test { input: String }` — clap derive, açıklama: "Verify a file survives a compress/decompress roundtrip"
+- Geçici dizin: `std::env::temp_dir() + pid + nanos` soneki
+- `compress_file` → `decompress_file` → `fs::read` ile karşılaştırma
+- Boyut farkı = erken fail; ilk fark ofseti raporlanır
+- Her durumda (PASS/FAIL/error) geçici dosyalar temizlenir
+- Çalıştığı doğrulandı: `PASS: <input> roundtripped byte-exact (<n> bytes)`
 
-KURALLAR: Yalnızca `core/src/cli.rs` ve `core/src/main.rs`. commit yapma.
-Clap derive mevcut varyantlarını bozma. Derlenebilir, mevcut testler yeşil.
-
-Milestone: cargo build --manifest-path core/Cargo.toml
+**Sonuç:** Kod değişikliği gerekmedi. AGY + Hermes doğrulaması yapıldı.
 
 ---
 
-### core/src/mtf.rs -> AGY
+## GÖREV B — ratio iyileştirme: ⚠️ DENENDİ, KAZANÇ YOK — BASELINE'A DÖNÜLDÜ
 
-Amaç: sıkıştırma oranını (ratio) iyileştir + geliştirme görüşü raporla.
-`MtfModel`'deki bağlam karma modelini (order1 + order2) geliştir. Şu an karma
-SABİT: `p_mix = (p1 + p2) >> 1`. Ratio kazancı için karışım AĞIRLIĞINI
-adaptif yap (ör. order-1 güvenine göre ağırlık, yumuşak geçiş), VEYA order-3
-bağlam ekle — ama karıştırıcının encode/decode tarafı AYNI olmalı
-(roundtrip byte-exact garantisi). Kod kalitesi + doğruluk öncelikli; ratio
-kazancı istendi ama davranış DEĞİŞİMİ encode ve decode'da simetrik olmalı.
+### Denenen: order-3 bağlam ekleme (AGY, 2 tur)
 
-ÖNEMLİ KONTRAK: `encode_tokens` ile `decode_tokens` AYNI context karıştırma
-formülünü üretmeli — decode tarafında context / hash hesabı encode ile
-BİREBİR aynı kalmalı. Yoksa roundtrip bozulur. Roundtrip descendency:
-`cargo test --manifest-path core/Cargo.toml --test roundtrip` 12 test YEŞİL
-kalmalı (0.02 ile %2'lik MTF değişimi zaten var, onu bozma).
+**Tur 1:** `MtfModel`'e `order3` eklendi; hash `((hash2*257) ^ prev3) & 0x1FFF`, ağırlıklar `O0=1,O1=3,O2=4,O3=8>>4`.
+- Ratio 5MB enwik8: **26.35% → 26.52%** (kötüleşti, -8.6KB)
 
-Nesnel hedef (mümkünse): mevcut `data/enwik8` (100MB değil, küçük bir
-örnekle test et — tam 100MB koşma, süre alır) üzerinde ORAN düşmeli
-(daha iyi). Ama kesin kriter roundtrip'teki 12 test + mevcut unit testler.
+**Tur 2:** Bağımsız hash `((prev1*92821) ^ (prev2*6899) ^ prev3) & 0x3FFF`, vektör 16384*512, ağırlıklar `O0=1,O1=3,O2=8,O3=4>>4`.
+- Ratio 5MB enwik8: **26.35% → 26.64%** (daha da kötüleşti)
 
-GÖRÜŞ RAPORU (JSON içinde `ideas` alanı): Cortex'in ratio ve hızını en çok
-artıracak 3-5 gerçekçi fikri sırala (ör. context modeli, RLE, BWT taraması,
-full-file mode). Her birinin tahmini etki + riskini yaz.
+**Analiz:** order-3 MTF-token bağlamında fayda vermiyor; order2'nin üzerine gürültü + cache-miss hız düşüşü (8.20→6.26 MB/s).
 
-KURALLAR: SADECE `core/src/mtf.rs`. Diğer dosyalara dokunma, commit yapma.
-`bwt_mtf_rle` / `decode_rle_mtf_bwt` imzalarını AYNEN koru. Mevcut unit
-testleri kırma. Derlenebilir olmalı.
+**Karar:** order-3 **geri alındı** (`git checkout -- core/src/mtf.rs`). Baseline ratio restore edildi: **26.35% @ 8.20 MB/s**. Roundtrip 12+2 test her aşamada yeşildi — davranış simetrisi korundu, sadece ratio kazancı yok.
 
-Milestone: cargo test --manifest-path core/Cargo.toml --test roundtrip
+### Sonraki adaylar (AGY görüş raporundan → `~/Desktop/cortex_gorus_raporu.md`):
+1. **Adaptif Context Mixing / SSE** — sabit ağırlıklar yerine her order'ın son tahmin hatasına göre dinamik ağırlık. En yüksek ratio potansiyeli, orta-zor.
+2. **RLE iyileştirmesi** — BWT zero-run tokenlarına daha verimli kod. Orta ratio + orta risk.
+3. **Blok-boyutlu divsufsort / hız** — ratio değil hız odaklı.
+4. **SIMD inverse BWT** — hız odaklı, ratio etkisiz.
+
+---
+
+## Milestonelar
+
+- [x] `cargo build --manifest-path core/Cargo.toml` — temiz derleniyor
+- [x] `cargo test --manifest-path core/Cargo.toml --test roundtrip` — 12 test YEŞİL
+- [x] `cargo test --lib` — 2 test YEŞİL
+- [x] 5MB enwik8 benchmark 26.35% (baseline)
+- [ ] Ratio iyileştirme (adaptif mix / RLE) — henüz kazanç bulunamadı
