@@ -1,5 +1,5 @@
 use cortex::mtf::{bwt_mtf_rle, decode_rle_mtf_bwt, MtfModel};
-use cortex::rangecoder::{Encoder, Decoder};
+use cortex::rangecoder::{Decoder, Encoder};
 use cortex::{compress_file, decompress_file};
 use rand::seq::SliceRandom;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -28,11 +28,20 @@ fn test_roundtrip(data: &[u8]) {
     let decoded_tokens = model_dec.decode_tokens(&mut dec, tokens.len()).unwrap();
     let decompressed = decode_rle_mtf_bwt(pidx, &decoded_tokens, data.len()).unwrap();
     if data != decompressed.as_slice() {
-        let first_diff = data.iter().zip(decompressed.iter()).enumerate().find(|(_, (a, b))| a != b);
+        let first_diff = data
+            .iter()
+            .zip(decompressed.iter())
+            .enumerate()
+            .find(|(_, (a, b))| a != b);
         println!("PIDX: {:?}", pidx);
         println!("First diff at: {:?}", first_diff);
     }
-    assert_eq!(data, decompressed.as_slice(), "Roundtrip failed for data length {}", data.len());
+    assert_eq!(
+        data,
+        decompressed.as_slice(),
+        "Roundtrip failed for data length {}",
+        data.len()
+    );
 }
 
 #[test]
@@ -66,7 +75,11 @@ fn test_file_api_roundtrip() {
     let comp_path = "tests/test_comp.ctx";
     let dec_path = "tests/test_out.bin";
 
-    fs::write(input_path, b"file api roundtrip test string over multiple blocks maybe?").unwrap();
+    fs::write(
+        input_path,
+        b"file api roundtrip test string over multiple blocks maybe?",
+    )
+    .unwrap();
 
     compress_file(input_path, comp_path).unwrap();
     decompress_file(comp_path, dec_path).unwrap();

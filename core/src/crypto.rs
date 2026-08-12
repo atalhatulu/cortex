@@ -1,7 +1,10 @@
-use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit}};
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Key, Nonce,
+};
 use pbkdf2::pbkdf2_hmac;
-use sha2::Sha256;
 use rand::RngCore;
+use sha2::Sha256;
 
 pub const SALT_LEN: usize = 16;
 pub const NONCE_LEN: usize = 12;
@@ -28,16 +31,17 @@ pub fn encrypt_chunk(
     data: &[u8],
 ) -> Result<Vec<u8>, std::io::Error> {
     let cipher = Aes256Gcm::new(key);
-    
+
     // Construct nonce by combining first 4 bytes of base_nonce with 8-byte chunk index
     // This strictly guarantees no nonce reuse for a single encryption session.
     let mut nonce_bytes = [0u8; NONCE_LEN];
     nonce_bytes[0..4].copy_from_slice(&base_nonce[0..4]);
     nonce_bytes[4..12].copy_from_slice(&chunk_index.to_be_bytes());
-    
+
     let nonce = Nonce::from_slice(&nonce_bytes);
-    
-    cipher.encrypt(nonce, data)
+
+    cipher
+        .encrypt(nonce, data)
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Encryption failed"))
 }
 
@@ -48,13 +52,17 @@ pub fn decrypt_chunk(
     data: &[u8],
 ) -> Result<Vec<u8>, std::io::Error> {
     let cipher = Aes256Gcm::new(key);
-    
+
     let mut nonce_bytes = [0u8; NONCE_LEN];
     nonce_bytes[0..4].copy_from_slice(&base_nonce[0..4]);
     nonce_bytes[4..12].copy_from_slice(&chunk_index.to_be_bytes());
 
     let nonce = Nonce::from_slice(&nonce_bytes);
-    
-    cipher.decrypt(nonce, data)
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Decryption failed (Wrong password or corrupted data)"))
+
+    cipher.decrypt(nonce, data).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Decryption failed (Wrong password or corrupted data)",
+        )
+    })
 }

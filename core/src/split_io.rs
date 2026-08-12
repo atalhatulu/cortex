@@ -1,8 +1,8 @@
 use std::fs::{self, File};
-use std::io::{self, Read, Write, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-/// A writer that seamlessly splits the output into multiple files 
+/// A writer that seamlessly splits the output into multiple files
 /// when a size threshold is reached. E.g. file, file.001, file.002
 pub struct SplitWriter {
     base_path: PathBuf,
@@ -18,7 +18,11 @@ impl SplitWriter {
         Ok(SplitWriter {
             base_path: path.as_ref().to_path_buf(),
             current_file,
-            split_size: if split_size == 0 { u64::MAX } else { split_size },
+            split_size: if split_size == 0 {
+                u64::MAX
+            } else {
+                split_size
+            },
             bytes_written_current: 0,
             part_index: 0,
         })
@@ -64,9 +68,7 @@ pub struct SplitReader {
 /// True when `name` looks like a split-volume suffix, e.g. `archive.ctx.001`.
 fn is_split_part(name: &str) -> bool {
     let b = name.as_bytes();
-    b.len() >= 4
-        && b[b.len() - 4] == b'.'
-        && b[b.len() - 3..].iter().all(|c| c.is_ascii_digit())
+    b.len() >= 4 && b[b.len() - 4] == b'.' && b[b.len() - 3..].iter().all(|c| c.is_ascii_digit())
 }
 
 impl SplitReader {
