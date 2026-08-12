@@ -16,6 +16,7 @@ rand = "0.8.5"
 lz4_flex = "0.14.0"
 zstd = "0.13.3"
 num_cpus = "1.17.0"
+crossbeam-channel = "0.5"
 
 [profile.release]
 opt-level = 3
