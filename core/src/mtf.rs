@@ -140,11 +140,15 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> ([u32; LANES], Vec<u16>) {
         t_starts[i] = current_t;
     }
 
+    let mut found_lanes = 0;
     for i in 0..n {
         let sa_i = sa[i];
-        for lane in 0..LANES {
-            if sa_i == t_starts[lane] as i32 {
-                pidx[lane] = i as u32;
+        if found_lanes < LANES {
+            for lane in 0..LANES {
+                if sa_i == t_starts[lane] as i32 {
+                    pidx[lane] = i as u32;
+                    found_lanes += 1;
+                }
             }
         }
 
