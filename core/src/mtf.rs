@@ -6,18 +6,18 @@ pub static PROF_MTF_RLE: AtomicU64 = AtomicU64::new(0);
 pub static PROF_INV_BWT_TARR: AtomicU64 = AtomicU64::new(0);
 pub static PROF_INV_BWT_TRAVERSAL: AtomicU64 = AtomicU64::new(0);
 
-const ADAPT_RATE: i32 = 5;
 pub const LANES: usize = 8;
 
 #[inline(always)]
-fn update_prob(prob: &mut u16, bit: u8) {
+fn update_prob(prob: &mut u16, bit: u8, adapt_rate: i32) {
     let p = *prob as i32;
     let target = ((bit as i32) ^ 1) * (PROB_MAX as i32);
-    let new_p = p + ((target - p) >> ADAPT_RATE);
+    let new_p = p + ((target - p) >> adapt_rate);
     *prob = new_p.clamp(1, PROB_MAX as i32 - 1) as u16;
 }
 
 pub struct MtfModel {
+    order0: Vec<u16>,
     order1: Vec<u16>,
     order2: Vec<u16>,
 }
@@ -25,8 +25,9 @@ pub struct MtfModel {
 impl MtfModel {
     pub fn new() -> Self {
         MtfModel {
+            order0: vec![PROB_MAX / 2; 512],
             order1: vec![PROB_MAX / 2; 257 * 512],
-            order2: vec![PROB_MAX / 2; 8192 * 512], // 8192 buckets = 8 MB table
+            order2: vec![PROB_MAX / 2; 8192 * 512],
         }
     }
 }
@@ -43,21 +44,24 @@ impl MtfModel {
         let mut prev2 = 0;
         for &token in tokens {
             let mut ctx = 1;
-            // 8192 buckets, mask is 8191 (0x1FFF)
             let hash = ((prev2 * 257) ^ prev1) & 0x1FFF;
             for i in (0..9).rev() {
                 let bit = ((token >> i) & 1) as u8;
                 let idx1 = (prev1 * 512) + ctx;
                 let idx2 = (hash * 512) + ctx;
 
+                let p0 = self.order0[ctx] as u32;
                 let p1 = self.order1[idx1] as u32;
                 let p2 = self.order2[idx2] as u32;
-                let p_mix = ((p1 + p2) >> 1) as u16;
+                
+                // Weights: O0=1, O1=3, O2=4 (Total 8)
+                let p_mix = ((p0 + p1 * 3 + p2 * 4) >> 3) as u16;
 
                 enc.encode_bit_fixed(p_mix, bit);
 
-                update_prob(&mut self.order1[idx1], bit);
-                update_prob(&mut self.order2[idx2], bit);
+                update_prob(&mut self.order0[ctx], bit, 5);
+                update_prob(&mut self.order1[idx1], bit, 5);
+                update_prob(&mut self.order2[idx2], bit, 4);
 
                 ctx = (ctx << 1) | bit as usize;
             }
@@ -78,14 +82,17 @@ impl MtfModel {
                 let idx1 = (prev1 * 512) + ctx;
                 let idx2 = (hash * 512) + ctx;
 
+                let p0 = self.order0[ctx] as u32;
                 let p1 = self.order1[idx1] as u32;
                 let p2 = self.order2[idx2] as u32;
-                let p_mix = ((p1 + p2) >> 1) as u16;
+                
+                let p_mix = ((p0 + p1 * 3 + p2 * 4) >> 3) as u16;
 
                 let bit = dec.decode_bit_fixed(p_mix);
 
-                update_prob(&mut self.order1[idx1], bit);
-                update_prob(&mut self.order2[idx2], bit);
+                update_prob(&mut self.order0[ctx], bit, 5);
+                update_prob(&mut self.order1[idx1], bit, 5);
+                update_prob(&mut self.order2[idx2], bit, 4);
 
                 ctx = (ctx << 1) | bit as usize;
             }
