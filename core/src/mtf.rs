@@ -26,7 +26,7 @@ impl MtfModel {
     pub fn new() -> Self {
         MtfModel {
             order1: vec![PROB_MAX / 2; 257 * 512],
-            order2: vec![PROB_MAX / 2; 257 * 512], // Small cache-friendly table
+            order2: vec![PROB_MAX / 2; 8192 * 512], // 8192 buckets = 8 MB table
         }
     }
 }
@@ -43,7 +43,8 @@ impl MtfModel {
         let mut prev2 = 0;
         for &token in tokens {
             let mut ctx = 1;
-            let hash = (prev1 ^ (prev2 >> 3)) & 255;
+            // 8192 buckets, mask is 8191 (0x1FFF)
+            let hash = ((prev2 * 257) ^ prev1) & 0x1FFF;
             for i in (0..9).rev() {
                 let bit = ((token >> i) & 1) as u8;
                 let idx1 = (prev1 * 512) + ctx;
@@ -72,7 +73,7 @@ impl MtfModel {
         let mut prev2 = 0;
         for _ in 0..len {
             let mut ctx = 1;
-            let hash = (prev1 ^ (prev2 >> 3)) & 255;
+            let hash = ((prev2 * 257) ^ prev1) & 0x1FFF;
             while ctx < 512 {
                 let idx1 = (prev1 * 512) + ctx;
                 let idx2 = (hash * 512) + ctx;
