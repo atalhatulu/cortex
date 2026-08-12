@@ -2,9 +2,6 @@
 /target/
 /core/target/
 
-# Dependency Directories
-Cargo.lock
-
 # Test and Output Files
 *.ctx
 *.out
