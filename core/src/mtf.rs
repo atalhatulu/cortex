@@ -121,12 +121,8 @@ pub fn bwt_mtf_rle(chunk: &[u8]) -> ([u32; LANES], Vec<u16>) {
     if n == 0 {
         return ([0; LANES], Vec::new());
     }
-    let sa: Vec<i32> = libsais::SuffixArrayConstruction::for_text(chunk)
-        .in_owned_buffer()
-        .multi_threaded(libsais::ThreadCount::openmp_default())
-        .run()
-        .expect("libsais construction failed")
-        .into_vec();
+    let sa_obj = divsufsort::sort(chunk);
+    let (_, sa) = sa_obj.into_parts();
 
     let mut bwt = vec![0u8; n];
     let mut pidx = [0u32; LANES];
