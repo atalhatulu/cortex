@@ -17,3 +17,6 @@ enwik8.zip
 *.swp
 *~
 logs/
+
+# Benchmark/Test Data — lokalde tut, git e GIRMEZ (gitignored)
+/data/
