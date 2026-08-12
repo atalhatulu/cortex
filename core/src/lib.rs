@@ -236,6 +236,16 @@ where
     })
 }
 
+enum DecompressStage1 {
+    Fast(Vec<u8>),
+    Normal {
+        pidx: [u32; mtf::LANES],
+        tokens: Vec<u16>,
+        is_exec: bool,
+        size: usize,
+    },
+}
+
 pub fn decompress_file_with_progress<F>(
     input: &str,
     output: &str,
@@ -312,125 +322,186 @@ where
     let start = Instant::now();
     callback(0, orig_len);
 
+    let total_threads = num_cpus::get();
+    let stage1_threads = std::cmp::max(1, total_threads / 2);
+    let stage2_threads = std::cmp::max(1, total_threads - stage1_threads);
+
+    let pool1 = rayon::ThreadPoolBuilder::new()
+        .num_threads(stage1_threads)
+        .build()
+        .unwrap();
+
+    let pool2 = rayon::ThreadPoolBuilder::new()
+        .num_threads(stage2_threads)
+        .build()
+        .unwrap();
+
     let batch_size = batch_size_for(block_size, 8);
     let mut out_file = fs::File::create(output)?;
     let mut num_comp_chunks = 0;
     let mut processed = 0;
-    let mut chunks_read_total = 0;
-    let mut global_chunk_idx: u64 = 0;
 
-    loop {
-        let mut batch_comp_chunks = Vec::new();
-        let mut batch_orig_sizes = Vec::new();
+    let channel_cap = std::cmp::max(24, total_threads * 3);
+    let (stage1_tx, stage1_rx) = crossbeam_channel::bounded::<(usize, std::io::Result<DecompressStage1>)>(channel_cap);
+    let (stage2_tx, stage2_rx) = crossbeam_channel::bounded::<(usize, std::io::Result<Vec<u8>>)>(channel_cap);
 
-        for _ in 0..batch_size {
-            let mut cl_bytes = [0u8; 4];
-            if let Err(e) = in_file.read_exact(&mut cl_bytes) {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    break;
+    let crypto_info_cloned = crypto_info.clone();
+    let reader_handle = std::thread::spawn(move || {
+        let mut global_idx = 0;
+        let mut chunks_read_total = 0;
+        loop {
+            let mut batch_comp_chunks = Vec::new();
+            let mut batch_orig_sizes = Vec::new();
+
+            for _ in 0..batch_size {
+                let mut cl_bytes = [0u8; 4];
+                if let Err(e) = in_file.read_exact(&mut cl_bytes) {
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        break;
+                    }
+                    let _ = stage1_tx.send((global_idx, Err(e)));
+                    return;
                 }
-                return Err(e);
+                let chunk_len = u32::from_le_bytes(cl_bytes) as usize;
+
+                let mut comp_data = vec![0u8; chunk_len];
+                if let Err(e) = in_file.read_exact(&mut comp_data) {
+                    let _ = stage1_tx.send((global_idx, Err(e)));
+                    return;
+                }
+
+                batch_comp_chunks.push(comp_data);
+
+                let exp_size = std::cmp::min(
+                    block_size,
+                    orig_len.saturating_sub(chunks_read_total * block_size),
+                );
+                batch_orig_sizes.push(exp_size);
+                chunks_read_total += 1;
             }
-            let chunk_len = u32::from_le_bytes(cl_bytes) as usize;
 
-            let mut comp_data = vec![0u8; chunk_len];
-            in_file.read_exact(&mut comp_data)?;
+            if batch_comp_chunks.is_empty() {
+                break;
+            }
 
-            batch_comp_chunks.push(comp_data);
+            let batch_len = batch_comp_chunks.len();
+            let batch_indices: Vec<usize> = (global_idx..global_idx + batch_len).collect();
+            let crypto_ref = crypto_info_cloned.as_ref();
 
-            let exp_size = std::cmp::min(
-                block_size,
-                orig_len.saturating_sub(chunks_read_total * block_size),
-            );
-            batch_orig_sizes.push(exp_size);
-            chunks_read_total += 1;
+            let batch_res = pool1.install(|| {
+                batch_comp_chunks
+                    .into_par_iter()
+                    .zip(batch_orig_sizes.into_par_iter())
+                    .zip(batch_indices.into_par_iter())
+                    .try_for_each(|((mut chunk, size), chunk_idx)| {
+                        if let Some((key, base_nonce)) = crypto_ref {
+                            chunk = match crypto::decrypt_chunk(key, base_nonce, chunk_idx as u64, &chunk) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    return stage1_tx.send((chunk_idx, Err(e))).map_err(|_| ());
+                                }
+                            };
+                        }
+
+                        let res = if is_fast {
+                            match zstd::decode_all(chunk.as_slice()) {
+                                Ok(d) => Ok(DecompressStage1::Fast(d)),
+                                Err(e) => Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!("Zstd Decompression error: {:?}", e),
+                                )),
+                            }
+                        } else {
+                            if chunk.len() < (mtf::LANES * 4) + 4 {
+                                Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Chunk too small for headers",
+                                ))
+                            } else {
+                                let mut pidx = [0u32; mtf::LANES];
+                                let mut ptr = 0;
+                                for i in 0..mtf::LANES {
+                                    pidx[i] = u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
+                                    ptr += 4;
+                                }
+                                let mut num_tokens =
+                                    u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
+                                ptr += 4;
+
+                                let is_exec = (num_tokens & (1 << 31)) != 0;
+                                num_tokens &= !(1 << 31);
+
+                                let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
+                                let mut model = mtf::MtfModel::new();
+
+                                match model.decode_tokens(&mut dec, num_tokens as usize) {
+                                    Ok(tokens) => Ok(DecompressStage1::Normal {
+                                        pidx,
+                                        tokens,
+                                        is_exec,
+                                        size,
+                                    }),
+                                    Err(e) => Err(e),
+                                }
+                            }
+                        };
+                        stage1_tx.send((chunk_idx, res)).map_err(|_| ())
+                    })
+            });
+
+            if batch_res.is_err() {
+                break; // Channel closed
+            }
+
+            global_idx += batch_len;
         }
+    });
 
-        if batch_comp_chunks.is_empty() {
-            break;
-        }
-
-        num_comp_chunks += batch_comp_chunks.len();
-
-        let batch_indices: Vec<u64> =
-            (global_chunk_idx..global_chunk_idx + batch_comp_chunks.len() as u64).collect();
-        global_chunk_idx += batch_comp_chunks.len() as u64;
-
-        let crypto_ref = crypto_info.as_ref(); // Safe reference for Rayon
-
-        let decompressed_batch: Vec<std::io::Result<Vec<u8>>> = batch_comp_chunks
-            .into_par_iter()
-            .zip(batch_orig_sizes.into_par_iter())
-            .zip(batch_indices.into_par_iter())
-            .map(|((mut chunk, size), chunk_idx)| {
-                if let Some((key, base_nonce)) = crypto_ref {
-                    chunk = match crypto::decrypt_chunk(key, base_nonce, chunk_idx, &chunk) {
-                        Ok(d) => d,
-                        Err(e) => return Err(e),
-                    };
-                }
-
-                let decompressed = if is_fast {
-                    match zstd::decode_all(chunk.as_slice()) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!("Zstd Decompression error: {:?}", e),
-                            ))
+    let stage2_handle = std::thread::spawn(move || {
+        pool2.install(|| {
+            let _ = stage1_rx.into_iter().par_bridge().try_for_each(|(idx, stage1_res)| {
+                let final_res = match stage1_res {
+                    Err(e) => Err(e),
+                    Ok(DecompressStage1::Fast(block)) => Ok(block),
+                    Ok(DecompressStage1::Normal { pidx, tokens, is_exec, size }) => {
+                        match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
+                            Err(e) => Err(e),
+                            Ok(mut block) => {
+                                if is_exec {
+                                    filters::e8e9_filter(&mut block, false);
+                                }
+                                Ok(block)
+                            }
                         }
                     }
-                } else {
-                    if chunk.len() < (mtf::LANES * 4) + 4 {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Chunk too small for headers",
-                        ));
-                    }
-                    let mut pidx = [0u32; mtf::LANES];
-                    let mut ptr = 0;
-                    for i in 0..mtf::LANES {
-                        pidx[i] = u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
-                        ptr += 4;
-                    }
-                    let mut num_tokens =
-                        u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
-                    ptr += 4;
-
-                    let is_exec = (num_tokens & (1 << 31)) != 0;
-                    num_tokens &= !(1 << 31);
-
-                    let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
-                    let mut model = mtf::MtfModel::new();
-
-                    let tokens = match model.decode_tokens(&mut dec, num_tokens as usize) {
-                        Ok(t) => t,
-                        Err(e) => return Err(e),
-                    };
-
-                    let mut block = match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
-                        Ok(d) => d,
-                        Err(e) => return Err(e),
-                    };
-
-                    if is_exec {
-                        filters::e8e9_filter(&mut block, false);
-                    }
-
-                    block
                 };
+                stage2_tx.send((idx, final_res)).map_err(|_| ())
+            });
+        });
+    });
 
-                Ok(decompressed)
-            })
-            .collect();
+    let mut pending_blocks = std::collections::BTreeMap::new();
+    let mut next_write_idx = 0;
 
-        for res in decompressed_batch {
-            let block = res?;
+    for (idx, res) in stage2_rx {
+        pending_blocks.insert(idx, res);
+        
+        while let Some(res_block) = pending_blocks.remove(&next_write_idx) {
+            let block = res_block?;
             out_file.write_all(&block)?;
             processed += block.len();
+            num_comp_chunks += 1;
+            next_write_idx += 1;
         }
-
+        
         callback(processed, orig_len);
+    }
+
+    if let Err(e) = reader_handle.join() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Reader thread panicked: {:?}", e)));
+    }
+    if let Err(e) = stage2_handle.join() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Stage2 thread panicked: {:?}", e)));
     }
 
     let elapsed = start.elapsed();

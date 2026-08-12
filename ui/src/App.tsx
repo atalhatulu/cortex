@@ -89,7 +89,7 @@ function App() {
 
           const parent = await invoke<string>('get_parent_directory', { path: first });
           const defaultName = first.split(/[\\/]/).pop() || "archive";
-          const defaultOut = `${parent}/${defaultName}.crx`;
+          const defaultOut = `${parent}/${defaultName}.ctx`;
 
           try {
             const res = await invoke<string>('compress_cmd', {
@@ -115,7 +115,7 @@ function App() {
           setStatusMessage('Extracting with CORTEX...');
           setProgress({ processed: 0, total: 100, is_compressing: false });
 
-          const defaultOutDir = inputPath.replace(/\.crx(\.\d{3})?$/, '_restored');
+          const defaultOutDir = inputPath.replace(/\.ctx(\.\d{3})?$/, '_restored');
           try {
             const res = await invoke<string>('decompress_cmd', {
                 inputPath,
@@ -133,9 +133,9 @@ function App() {
         }
 
         // `open` from a ServiceMenu / Nautilus script, or a bare path from
-        // double-clicking an archive, both mean "show this location": a .crx
+        // double-clicking an archive, both mean "show this location": a .ctx
         // opens as a virtual folder via list_directory. Split volumes
-        // (archive.crx.001) are normalized to the base file so the lookup
+        // (archive.ctx.001) are normalized to the base file so the lookup
         // succeeds.
         const openTarget = action === "open"
           ? firstTarget
@@ -143,7 +143,7 @@ function App() {
               ? action
               : '');
         if (openTarget) {
-          const normalized = openTarget.replace(/\.crx\.\d{3}$/i, '.crx');
+          const normalized = openTarget.replace(/\.ctx\.\d{3}$/i, '.ctx');
           await loadDirectory(normalized);
           return;
         }
@@ -256,7 +256,7 @@ function App() {
         const firstFile = files.find(f => f.path === Array.from(selectedPaths)[0]);
         if (firstFile) defaultName = firstFile.name;
       }
-      const defaultOut = `${currentPath}/${defaultName}.crx`;
+      const defaultOut = `${currentPath}/${defaultName}.ctx`;
       
       const outPath = await save({ defaultPath: defaultOut });
       if (outPath) {
@@ -285,11 +285,11 @@ function App() {
   const handleExtract = async () => {
     const selectedArray = Array.from(selectedPaths);
     if (selectedArray.length !== 1) {
-      setStatusMessage('Please select a single .crx file to extract.');
+      setStatusMessage('Please select a single .ctx file to extract.');
       return;
     }
     const archivePath = selectedArray[0];
-    if (!archivePath.endsWith('.crx') && !archivePath.endsWith('.crx.001')) return;
+    if (!archivePath.endsWith('.ctx') && !archivePath.endsWith('.ctx.001')) return;
 
     setIsProcessing(true);
     setStatusMessage('Extracting...');
@@ -299,7 +299,7 @@ function App() {
     setTimeRemaining('');
 
     try {
-      const defaultOutDir = archivePath.replace(/\.crx(\.\d{3})?$/, '_restored');
+      const defaultOutDir = archivePath.replace(/\.ctx(\.\d{3})?$/, '_restored');
       const outPath = await save({ defaultPath: defaultOutDir });
       if (outPath) {
         const res = await invoke<string>('decompress_cmd', { 
@@ -326,7 +326,7 @@ function App() {
     ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) 
     : 0;
 
-  const isExtractDisabled = selectedPaths.size !== 1 || (!Array.from(selectedPaths)[0].endsWith('.crx') && !Array.from(selectedPaths)[0].endsWith('.001'));
+  const isExtractDisabled = selectedPaths.size !== 1 || (!Array.from(selectedPaths)[0].endsWith('.ctx') && !Array.from(selectedPaths)[0].endsWith('.001'));
 
   // Pure display helper: breaks the current path into clickable segments.
   // Clicking a segment just calls the existing loadDirectory — no new logic.
@@ -434,7 +434,7 @@ function App() {
                   toggleSelection(f.path, e.ctrlKey || e.metaKey);
                 }}
                 onDoubleClick={() => {
-                  if ((f.is_dir || f.name.endsWith('.crx')) && !isProcessing) {
+                  if ((f.is_dir || f.name.endsWith('.ctx')) && !isProcessing) {
                     loadDirectory(f.path);
                   }
                 }}
@@ -443,7 +443,7 @@ function App() {
                   <div className="file-name-cell">
                     {f.is_dir ? (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                    ) : f.name.endsWith('.crx') ? (
+                    ) : f.name.endsWith('.ctx') ? (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-color)" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                     ) : (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
