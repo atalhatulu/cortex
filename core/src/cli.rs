@@ -21,6 +21,9 @@ pub enum Commands {
         /// Password for encryption (optional)
         #[arg(short, long)]
         password: Option<String>,
+        /// Use Fast Mode (LZ + rANS) instead of Maximum Mode (BWT + CM)
+        #[arg(long, default_value_t = false)]
+        fast: bool,
         /// Split archive into volumes of given size in MB (0 to disable)
         #[arg(short, long, default_value_t = 0)]
         split: usize,
@@ -62,6 +65,11 @@ pub enum Commands {
     /// Show archive header information
     Info {
         /// The input .crx file to inspect
+        input: String,
+    },
+    /// Verify a file survives a compress/decompress roundtrip
+    Test {
+        /// The input file to verify
         input: String,
     },
 }

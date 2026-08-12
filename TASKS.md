@@ -1,53 +1,62 @@
-# Fleet görevi — Cortex roundtrip testlerini güçlendir
+# Fleet görevi — Cortex: `test` komutu + ratio iyileştirme
 
-### core/tests/roundtrip.rs -> FCC-CLAUDE
-`core/tests/roundtrip.rs` dosyasındaki roundtrip byte-exact testlerini güçlendir.
-Amaç: BWT->MTF->RLE decode path'ini (özellikle pidx LF-mapping) uç durumlarda
-doğrulamak. Mevcut 5 test yetersiz: en büyük veri 1000 byte, tekrar verisi tek
-case, boş veri gerçekten test edilmiyor.
-
-Yapılacaklar:
-1. `test_roundtrip` helper'ındaki `if data.is_empty() { return; }` early-return'ü
-   kaldır — boş veriyi GERÇEKTEN test et (test_roundtrip_empty boş girdiyle
-   assert'e ulaşsın).
-2. Edge case testleri ekle:
-   - Tümü 0x00 (ör. 100 byte)
-   - Tümü 0xFF (ör. 100 byte)
-   - 0,1,2,...,255 ardışık artan
-   - 255,254,...,0 azalan
-   - Aynı byte'ın uzun tekrarı (ör. 10_000 x 0x41) — RLE patlaması
-   - 0x00..0xFF tüm 256 farklı byte
-3. Fuzz testi ekle: sabit seed'li deterministik RNG (rand crate zaten bağımlılıkta,
-   StdRng::seed_from_u64 kullan). 5 ayrı seed sabitle; her seed için boyutlar:
-   0, 1, 2, 3, 15, 64, 255, 256, 257, 1000, 4096, 64_000 civarı. Her boyutu
-   gerçekten test et. Seed'ler ve boyutlar SABİT olacak ki test tekrarlanabilir
-   olsun (fuzz "at random" değil, deterministik).
-
-KURALLAR: SADECE core/tests/roundtrip.rs dosyasını yaz. Başka dosya OLUŞTURMA,
-core/Cargo.toml / core/src/* dosyalarına DOKUNMA, commit yapma. Mevcut
-`test_roundtrip` imzasını koru; yeni testler onu çağırsın. Mevcut 5 testi
-SİLME veya imzalarını bozma (hepsi #![test] fonksiyonu). `use cortex::...`
-importlarını gerekirse güncelle. Derlenebilir ve geçebilir olmalı.
-
-Milestone: cargo test --manifest-path core/Cargo.toml --test roundtrip
+İki bağımsız görev, FARKLI dosyalar (uyumlu, PARALEL). Milestone'lar nesneldir.
 
 ---
 
-### core/src/mtf.rs -> FCC-CLAUDE
-Boş (0-byte) veri desteği. Şu an `decode_rle_mtf_bwt(0, &[], 0)` hata döndürüyor
-(pidx >= n kontrolü); `core/tests/roundtrip.rs` artık boş bloğun Ok(vec![])
-döndürmesini bekliyor (test beklentisi güncellendi — "decode must reject"
-kaldırıldı, "decode must return empty" geldi). Amaç: boş girdide tam byte-exact
-roundtrip: `bwt_mtf_rle([])` -> (pidx=0, []) (mevcut davranış), ardından
-`decode_rle_mtf_bwt(0, &[], 0)` -> Ok(vec![]).
+### core/src/cli.rs + core/src/main.rs -> FCC-CLAUDE
 
-DİKKAT: Diğer tüm davranışları aynen koru — 11 diğer roundtrip testi ve
-mevcut tüm unit testler yeşil kalmalı. SADECE boş-blok dalını düzelt
-(örn. `n == 0 && original_size == 0` durumunda erken Ok(vec![]) dönüşü gibi).
-Guardrail'leri atlama (RLE/MTF token doğrulamaları, uzunluk uyumsuzluğu
-kontrolleri aynen kalsın).
+Yeni `test` alt komutu: bir dosyayı sıkıştırıp geri açarak roundtrip'i
+byte-exact doğrulama modu. Amaç hızlı bütünlük kontrolü.
 
-KURALLAR: SADECE core/src/mtf.rs dosyasını yaz. Diğer dosyalara dokunma,
-commit yapma. Derlenebilir ve tüm testler geçebilir olmalı.
+API SÖZLEŞMESİ (BİREBİR):
+- Komut: `cortex test <input>`
+- `core/src/cli.rs`: `Commands::Test { input: String }` varyantı ekle
+  (clap derive; açıklama: "Verify a file survives a compress/decompress roundtrip").
+- `core/src/main.rs` `Commands::Test` kolunda:
+  - Geçici dizin kullan (std::env::temp_dir + process id + rastgele ek).
+  - `compress_file(input, tmp.crx)` sonra `decompress_file(tmp.crx, tmp.out)` çağır.
+  - İki dosyayı `fs::read` ile karşılaştır (akıllıca: boyut farkıysa erken fail).
+  - Başarı: `PASS: <input> roundtripped byte-exact (<n> bytes)` (exit 0).
+  - Fark varsa: `FAIL: <input> differs after roundtrip` + `cmp` benzeri ilk fark
+    ofsetini ve exit code 1 döndür.
+  - Geçici dosyaları HER DURUMDA temizle (ok, fail, hata).
+- Mevcut `Info`/`Compress`/`Decompress` kollarına dokunma; `Info` koluna yeni
+  alan EKLEME.
+
+KURALLAR: Yalnızca `core/src/cli.rs` ve `core/src/main.rs`. commit yapma.
+Clap derive mevcut varyantlarını bozma. Derlenebilir, mevcut testler yeşil.
+
+Milestone: cargo build --manifest-path core/Cargo.toml
+
+---
+
+### core/src/mtf.rs -> AGY
+
+Amaç: sıkıştırma oranını (ratio) iyileştir + geliştirme görüşü raporla.
+`MtfModel`'deki bağlam karma modelini (order1 + order2) geliştir. Şu an karma
+SABİT: `p_mix = (p1 + p2) >> 1`. Ratio kazancı için karışım AĞIRLIĞINI
+adaptif yap (ör. order-1 güvenine göre ağırlık, yumuşak geçiş), VEYA order-3
+bağlam ekle — ama karıştırıcının encode/decode tarafı AYNI olmalı
+(roundtrip byte-exact garantisi). Kod kalitesi + doğruluk öncelikli; ratio
+kazancı istendi ama davranış DEĞİŞİMİ encode ve decode'da simetrik olmalı.
+
+ÖNEMLİ KONTRAK: `encode_tokens` ile `decode_tokens` AYNI context karıştırma
+formülünü üretmeli — decode tarafında context / hash hesabı encode ile
+BİREBİR aynı kalmalı. Yoksa roundtrip bozulur. Roundtrip descendency:
+`cargo test --manifest-path core/Cargo.toml --test roundtrip` 12 test YEŞİL
+kalmalı (0.02 ile %2'lik MTF değişimi zaten var, onu bozma).
+
+Nesnel hedef (mümkünse): mevcut `data/enwik8` (100MB değil, küçük bir
+örnekle test et — tam 100MB koşma, süre alır) üzerinde ORAN düşmeli
+(daha iyi). Ama kesin kriter roundtrip'teki 12 test + mevcut unit testler.
+
+GÖRÜŞ RAPORU (JSON içinde `ideas` alanı): Cortex'in ratio ve hızını en çok
+artıracak 3-5 gerçekçi fikri sırala (ör. context modeli, RLE, BWT taraması,
+full-file mode). Her birinin tahmini etki + riskini yaz.
+
+KURALLAR: SADECE `core/src/mtf.rs`. Diğer dosyalara dokunma, commit yapma.
+`bwt_mtf_rle` / `decode_rle_mtf_bwt` imzalarını AYNEN koru. Mevcut unit
+testleri kırma. Derlenebilir olmalı.
 
 Milestone: cargo test --manifest-path core/Cargo.toml --test roundtrip

@@ -11,9 +11,9 @@ fn test_roundtrip(data: &[u8]) {
         // decode must return an empty output (Ok(vec![])) — a real byte-exact
         // roundtrip for the empty input, not a rejection.
         let (pidx, tokens) = bwt_mtf_rle(data);
-        assert_eq!(pidx, 0, "empty input must yield primary index 0");
+        assert_eq!(pidx, [0; 8], "empty input must yield primary index [0; 8]");
         assert!(tokens.is_empty(), "empty input must yield no RLE tokens");
-        let out = decode_rle_mtf_bwt(pidx as usize, &tokens, data.len()).unwrap();
+        let out = decode_rle_mtf_bwt(pidx, &tokens, data.len()).unwrap();
         assert!(out.is_empty(), "empty block must decode to empty output");
         return;
     }
@@ -26,8 +26,12 @@ fn test_roundtrip(data: &[u8]) {
     let mut dec = Decoder::new(&compressed);
     let mut model_dec = MtfModel::new();
     let decoded_tokens = model_dec.decode_tokens(&mut dec, tokens.len()).unwrap();
-
-    let decompressed = decode_rle_mtf_bwt(pidx as usize, &decoded_tokens, data.len()).unwrap();
+    let decompressed = decode_rle_mtf_bwt(pidx, &decoded_tokens, data.len()).unwrap();
+    if data != decompressed.as_slice() {
+        let first_diff = data.iter().zip(decompressed.iter()).enumerate().find(|(_, (a, b))| a != b);
+        println!("PIDX: {:?}", pidx);
+        println!("First diff at: {:?}", first_diff);
+    }
     assert_eq!(data, decompressed.as_slice(), "Roundtrip failed for data length {}", data.len());
 }
 

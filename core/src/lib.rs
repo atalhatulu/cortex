@@ -2,10 +2,54 @@ pub mod rangecoder;
 pub mod mtf;
 pub mod crypto;
 pub mod split_io;
+pub mod filters;
+
+pub const MAGIC: &[u8; 4] = b"CTX8";
+pub const MAGIC_FAST: &[u8; 4] = b"CTXF";
 
 use rayon::prelude::*;
 use std::fs;
 use std::time::{Duration, Instant};
+
+fn get_available_memory_mb() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
+            for line in contents.lines() {
+                if line.starts_with("MemAvailable:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(kb) = parts[1].parse::<usize>() {
+                            return Some(kb / 1024);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn batch_size_for(block_size: usize, _multiplier: usize) -> usize {
+    let t = num_cpus::get();
+    
+    // Each block uses approx: block_size * 6 (SA + BWT)
+    let memory_per_block_mb = (block_size * 6) / (1024 * 1024);
+    
+    if let Some(avail_mb) = get_available_memory_mb() {
+        // Leave 500MB headroom
+        let safe_mb = avail_mb.saturating_sub(500);
+        let max_blocks = if memory_per_block_mb > 0 {
+            safe_mb / memory_per_block_mb
+        } else {
+            t
+        };
+        let final_batch = t.min(std::cmp::max(1, max_blocks));
+        final_batch
+    } else {
+        t
+    }
+}
 
 /// Single source of truth for the level → block-size mapping.
 ///
@@ -24,20 +68,7 @@ pub fn block_size_for_level(level: u8) -> usize {
     }
 }
 
-/// Memory budget per processing batch (bytes). Bounds worst-case peak RSS:
-/// with a fixed batch of 16, the largest blocks (64 MB) would keep ~10 GB
-/// resident and OOM typical consumer machines.
-const BATCH_MEMORY_BUDGET: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
-const MAX_BATCH_SIZE: usize = 16;
 
-/// How many chunks may run concurrently for a given block size.
-/// `bytes_per_input_byte` is a conservative per-chunk peak-memory multiplier:
-/// ~10 for compression (input + 4-byte SA + BWT + tokens + slack),
-/// ~8 for decompression (BWT + 4-byte `t_arr` + output + tokens).
-fn batch_size_for(block_size: usize, bytes_per_input_byte: usize) -> usize {
-    let per_chunk = block_size.saturating_mul(bytes_per_input_byte).max(1);
-    (BATCH_MEMORY_BUDGET / per_chunk).clamp(1, MAX_BATCH_SIZE)
-}
 
 pub struct Stats {
     pub input_size: usize,
@@ -47,7 +78,7 @@ pub struct Stats {
 }
 
 pub fn compress_file(input: &str, output: &str) -> std::io::Result<Stats> {
-    compress_file_with_progress(input, output, None, None, 3, 0, |_, _| {})
+    compress_file_with_progress(input, output, None, None, 3, 0, false, |_, _| {})
 }
 
 pub fn decompress_file(input: &str, output: &str) -> std::io::Result<Stats> {
@@ -61,6 +92,7 @@ pub fn compress_file_with_progress<F>(
     _password: Option<&str>,
     _level: u8,
     _split_size: usize,
+    fast: bool,
     mut callback: F,
 ) -> std::io::Result<Stats>
 where
@@ -89,7 +121,8 @@ where
     let encrypted = _password.is_some() && !_password.unwrap().is_empty();
     let flags: u8 = if encrypted { 1 } else { 0 };
 
-    out_file.write_all(b"CTX6")?;
+    let magic = if fast { MAGIC_FAST } else { MAGIC };
+    out_file.write_all(magic)?;
     out_file.write_all(&(total_len as u64).to_le_bytes())?;
     out_file.write_all(&[flags])?;
     out_file.write_all(&(block_size_actual as u32).to_le_bytes())?;
@@ -138,21 +171,36 @@ where
         num_chunks += batch_data.len();
         let batch_processed: usize = batch_data.iter().map(|b| b.len()).sum();
 
-        let compressed_batch: Vec<Vec<u8>> = batch_data.par_iter().map(|chunk| {
-            let (pidx, tokens) = mtf::bwt_mtf_rle(chunk);
-            let num_tokens = tokens.len() as u32;
+        let compressed_batch: Vec<Vec<u8>> = batch_data.par_iter().map(|chunk_in| {
+            if fast {
+                zstd::encode_all(chunk_in.as_slice(), 3).unwrap()
+            } else {
+                let mut chunk = chunk_in.clone();
+                let is_exec = filters::is_executable(&chunk);
+                if is_exec {
+                    filters::e8e9_filter(&mut chunk, true);
+                }
 
-            let mut enc = rangecoder::Encoder::new();
-            let mut model = mtf::MtfModel::new();
-            model.encode_tokens(&mut enc, &tokens);
-            let mut out = enc.finish();
+                let (pidx, tokens) = mtf::bwt_mtf_rle(&chunk);
+                let mut num_tokens = tokens.len() as u32;
+                if is_exec {
+                    num_tokens |= 1 << 31;
+                }
 
-            let mut final_out = Vec::with_capacity(8 + out.len());
-            final_out.extend_from_slice(&pidx.to_le_bytes());
-            final_out.extend_from_slice(&num_tokens.to_le_bytes());
-            final_out.append(&mut out);
+                let mut enc = rangecoder::Encoder::new();
+                let mut model = mtf::MtfModel::new();
+                model.encode_tokens(&mut enc, &tokens);
+                let mut out = enc.finish();
 
-            final_out
+                let mut final_out = Vec::with_capacity(36 + out.len());
+                for i in 0..mtf::LANES {
+                    final_out.extend_from_slice(&pidx[i].to_le_bytes());
+                }
+                final_out.extend_from_slice(&num_tokens.to_le_bytes());
+                final_out.append(&mut out);
+
+                final_out
+            }
         }).collect();
 
         for block in compressed_batch {
@@ -198,15 +246,14 @@ where
     // truthful. Only used for reporting — never for decode correctness.
     let file_len = in_file.total_size()? as usize;
     
-    let mut header = vec![0u8; 17];
+    let mut header = [0u8; 17];
     in_file.read_exact(&mut header)?;
 
-    let is_ctx6 = &header[0..4] == b"CTX6";
-    let is_ctx5 = &header[0..4] == b"CTX5";
-    let is_ctx4 = &header[0..4] == b"CTX4";
+    let is_ctx8 = &header[0..4] == MAGIC;
+    let is_fast = &header[0..4] == MAGIC_FAST;
 
-    if !is_ctx6 && !is_ctx5 && !is_ctx4 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid or outdated magic bytes"));
+    if !is_ctx8 && !is_fast {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Not a valid Cortex archive"));
     }
 
     let mut len_bytes = [0u8; 8];
@@ -223,15 +270,12 @@ where
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Block size cannot be zero"));
     }
 
-    let mut meta_len = 0;
-    if is_ctx5 || is_ctx6 {
-        let mut ml_bytes = [0u8; 4];
-        in_file.read_exact(&mut ml_bytes)?;
-        meta_len = u32::from_le_bytes(ml_bytes) as usize;
-    }
+    let mut ml_bytes = [0u8; 4];
+    in_file.read_exact(&mut ml_bytes)?;
+    let meta_len = u32::from_le_bytes(ml_bytes) as usize;
 
     let mut crypto_info = None;
-    if is_ctx6 && encrypted {
+    if encrypted {
         if _password.is_none() || _password.unwrap().is_empty() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Password required"));
         }
@@ -242,8 +286,6 @@ where
         
         let key = crypto::derive_key(_password.unwrap(), &salt);
         crypto_info = Some((key, nonce));
-    } else if encrypted {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Encrypted format mismatch"));
     }
 
     if meta_len > 0 {
@@ -308,23 +350,45 @@ where
                 };
             }
 
-            if chunk.len() < 8 {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk too small for headers"));
-            }
-            let pidx = u32::from_le_bytes(chunk[0..4].try_into().unwrap()) as usize;
-            let num_tokens = u32::from_le_bytes(chunk[4..8].try_into().unwrap()) as usize;
+            let decompressed = if is_fast {
+                match zstd::decode_all(chunk.as_slice()) {
+                    Ok(d) => d,
+                    Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Zstd Decompression error: {:?}", e))),
+                }
+            } else {
+                if chunk.len() < (mtf::LANES * 4) + 4 {
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Chunk too small for headers"));
+                }
+                let mut pidx = [0u32; mtf::LANES];
+                let mut ptr = 0;
+                for i in 0..mtf::LANES {
+                    pidx[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
+                    ptr += 4;
+                }
+                let mut num_tokens = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
+                ptr += 4;
+                
+                let is_exec = (num_tokens & (1 << 31)) != 0;
+                num_tokens &= !(1 << 31);
 
-            let mut dec = rangecoder::Decoder::new(&chunk[8..]);
-            let mut model = mtf::MtfModel::new();
+                let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
+                let mut model = mtf::MtfModel::new();
 
-            let tokens = match model.decode_tokens(&mut dec, num_tokens) {
-                Ok(t) => t,
-                Err(e) => return Err(e),
-            };
+                let tokens = match model.decode_tokens(&mut dec, num_tokens as usize) {
+                    Ok(t) => t,
+                    Err(e) => return Err(e),
+                };
 
-            let decompressed = match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
-                Ok(d) => d,
-                Err(e) => return Err(e),
+                let mut block = match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
+                    Ok(d) => d,
+                    Err(e) => return Err(e),
+                };
+                
+                if is_exec {
+                    filters::e8e9_filter(&mut block, false);
+                }
+                
+                block
             };
 
             Ok(decompressed)
@@ -359,10 +423,10 @@ pub fn read_metadata(input: &str) -> std::io::Result<Option<Vec<u8>>> {
         return Ok(None);
     }
     
-    let is_ctx6 = &header[0..4] == b"CTX6";
-    let is_ctx5 = &header[0..4] == b"CTX5";
+    let is_ctx8 = &header[0..4] == MAGIC;
+    let is_fast = &header[0..4] == MAGIC_FAST;
     
-    if !is_ctx6 && !is_ctx5 {
+    if !is_ctx8 && !is_fast {
         return Ok(None);
     }
 
@@ -373,7 +437,7 @@ pub fn read_metadata(input: &str) -> std::io::Result<Option<Vec<u8>>> {
     f.read_exact(&mut ml_bytes)?;
     let meta_len = u32::from_le_bytes(ml_bytes) as usize;
 
-    if is_ctx6 && encrypted {
+    if encrypted {
         let mut discard = [0u8; 28]; // salt + nonce
         f.read_exact(&mut discard)?;
     }

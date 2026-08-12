@@ -108,36 +108,49 @@ impl Encoder {
     }
 }
 
-/// Decodes bits from a compressed byte stream, mirroring `Encoder` exactly.
 pub struct Decoder<'a> {
     range: u32,
     code: u32,
-    input: &'a [u8],
-    pos: usize,
+    ptr: *const u8,
+    end: *const u8,
+    _marker: std::marker::PhantomData<&'a [u8]>,
 }
 
 impl<'a> Decoder<'a> {
     pub fn new(input: &'a [u8]) -> Self {
         let mut code: u32 = 0;
-        // The encoder's first emitted byte is always the initial cache (0xFF
-        // with a carry that resolves to 0x00 in practice) — skip it, then
-        // read 4 bytes to prime `code`.
-        let mut pos = 1;
-        for _ in 0..4 {
-            code = (code << 8) | Self::byte_at(input, &mut pos);
+        let mut ptr = input.as_ptr();
+        let end = unsafe { ptr.add(input.len()) };
+
+        if input.len() > 0 {
+            unsafe { ptr = ptr.add(1) };
         }
+        
+        for _ in 0..4 {
+            let b = if ptr < end { unsafe { let v = *ptr; ptr = ptr.add(1); v } } else { 0 };
+            code = (code << 8) | (b as u32);
+        }
+        
         Decoder {
             range: 0xFFFF_FFFF,
             code,
-            input,
-            pos,
+            ptr,
+            end,
+            _marker: std::marker::PhantomData,
         }
     }
 
-    fn byte_at(input: &[u8], pos: &mut usize) -> u32 {
-        let b = if *pos < input.len() { input[*pos] } else { 0 };
-        *pos += 1;
-        b as u32
+    #[inline(always)]
+    fn byte_at(&mut self) -> u32 {
+        if self.ptr < self.end {
+            unsafe {
+                let v = *self.ptr;
+                self.ptr = self.ptr.add(1);
+                v as u32
+            }
+        } else {
+            0
+        }
     }
 
     #[inline]
@@ -155,7 +168,7 @@ impl<'a> Decoder<'a> {
 
         while self.range < TOP {
             self.range <<= 8;
-            self.code = (self.code << 8) | Self::byte_at(self.input, &mut self.pos);
+            self.code = (self.code << 8) | self.byte_at();
         }
         bit
     }
@@ -174,7 +187,7 @@ impl<'a> Decoder<'a> {
         }
         while self.range < TOP {
             self.range <<= 8;
-            self.code = (self.code << 8) | Self::byte_at(self.input, &mut self.pos);
+            self.code = (self.code << 8) | self.byte_at();
         }
         bit
     }

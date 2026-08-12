@@ -40,7 +40,7 @@ fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compress { input, output, level, password, split, threads, force, quiet, verbose } => {
+        Commands::Compress { input, output, level, password, split, threads, force, quiet, verbose, fast } => {
             setup_threads(threads);
             let out_file = output.unwrap_or_else(|| format!("{}.crx", input));
             check_force(&out_file, force)?;
@@ -70,6 +70,7 @@ fn main() -> std::io::Result<()> {
                 pwd_ref, // password
                 level, // level
                 split_bytes, // split_size (bytes)
+                fast, // fast mode
                 |processed, total| {
                     if !quiet {
                         if !init {
@@ -184,6 +185,21 @@ fn main() -> std::io::Result<()> {
                         stats.elapsed.as_secs_f64(),
                         stats.chunks
                     );
+
+                    let entropy_s = cortex::mtf::PROF_ENTROPY.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
+                    let mtf_rle_s = cortex::mtf::PROF_MTF_RLE.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
+                    let tarr_s = cortex::mtf::PROF_INV_BWT_TARR.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
+                    let invbwt_s = cortex::mtf::PROF_INV_BWT_TRAVERSAL.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
+                    let sum = entropy_s + mtf_rle_s + tarr_s + invbwt_s;
+                    println!("\n========================================");
+                    println!("CORTEX DECODE PROFILE (Sum across threads)");
+                    println!("========================================");
+                    println!("{:<30} {:.2} s", "Entropy decode & Context", entropy_s);
+                    println!("{:<30} {:.2} s", "MTF + RLE", mtf_rle_s);
+                    println!("{:<30} {:.2} s", "Inverse BWT (t_arr build)", tarr_s);
+                    println!("{:<30} {:.2} s", "Inverse BWT (traversal)", invbwt_s);
+                    println!("{:<30} {:.2} s", "Subtotal Thread CPU Time", sum);
+                    println!("========================================");
                 }
             }
         }
@@ -242,6 +258,60 @@ fn main() -> std::io::Result<()> {
             println!("Original size: {} bytes ({})", orig_len, format_bytes(orig_len));
             println!("Block size:    {} bytes ({})", block_size, format_bytes(block_size));
             println!("Metadata:      {} bytes", meta_len);
+        }
+        Commands::Test { input } => {
+            // Unique temp directory: system temp + pid + a random-looking nanos suffix.
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0);
+            let tmp_dir = std::env::temp_dir()
+                .join(format!("cortex-test-{}-{}", std::process::id(), nanos));
+            std::fs::create_dir_all(&tmp_dir)?;
+            let crx_path = tmp_dir.join("test.crx");
+            let out_path = tmp_dir.join("test.out");
+
+            let ok = (|| -> std::io::Result<bool> {
+                let crx = crx_path.to_string_lossy();
+                let out = out_path.to_string_lossy();
+                cortex::compress_file(&input, &crx)?;
+                cortex::decompress_file(&crx, &out)?;
+
+                let orig = std::fs::read(&input)?;
+                let round = std::fs::read(&out_path)?;
+
+                // Fast path: differing sizes can never roundtrip byte-exact.
+                if orig.len() != round.len() {
+                    println!(
+                        "FAIL: {} differs after roundtrip (size mismatch: {} vs {} bytes)",
+                        input,
+                        orig.len(),
+                        round.len()
+                    );
+                    return Ok(false);
+                }
+
+                match orig.iter().zip(round.iter()).position(|(a, b)| a != b) {
+                    Some(offset) => {
+                        println!(
+                            "FAIL: {} differs after roundtrip (first diff at byte {})",
+                            input, offset
+                        );
+                        Ok(false)
+                    }
+                    None => {
+                        println!("PASS: {} roundtripped byte-exact ({} bytes)", input, orig.len());
+                        Ok(true)
+                    }
+                }
+            })();
+
+            // Clean up temp files in every case (pass, fail, error).
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+
+            if !ok? {
+                std::process::exit(1);
+            }
         }
     }
 
