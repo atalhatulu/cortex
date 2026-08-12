@@ -262,6 +262,7 @@ dependencies = [
  "pbkdf2",
  "rand",
  "rayon",
+ "serde_json",
  "sha2",
  "zstd",
 ]

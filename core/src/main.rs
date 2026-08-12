@@ -80,10 +80,22 @@ fn main() -> std::io::Result<()> {
             // convert here. saturating_mul guards against absurd MB values.
             let split_bytes = (split as u64).saturating_mul(1024 * 1024) as usize;
 
+            let file_meta = std::fs::metadata(&input)?;
+            let modified_ts = file_meta.modified()?.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let meta_json = serde_json::json!([{
+                "name": Path::new(&input).file_name().unwrap_or_default().to_string_lossy(),
+                "size": file_meta.len(),
+                "type": "File",
+                "modified_ts": modified_ts,
+                "path": &input,
+                "is_dir": false,
+            }]);
+            let meta_bytes = serde_json::to_vec(&meta_json)?;
+
             let stats = compress_file_with_progress(
                 &input,
                 &out_file,
-                None,        // metadata
+                Some(meta_bytes.as_slice()), // metadata
                 pwd_ref,     // password
                 level,       // level
                 split_bytes, // split_size (bytes)
