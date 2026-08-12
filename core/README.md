@@ -39,10 +39,10 @@ Cortex was designed to be incredibly simple from the terminal.
 ```bash
 cortex compress enwik8
 ```
-*(Automatically creates `enwik8.crx`)*
+*(Automatically creates `enwik8.ctx`)*
 
 **Decompress a file:**
 ```bash
-cortex decompress enwik8.crx
+cortex decompress enwik8.ctx
 ```
 *(Automatically creates `enwik8`)*

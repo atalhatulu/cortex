@@ -31,8 +31,8 @@ fn list_directory(path: String) -> Result<Vec<FileItem>, String> {
         PathBuf::from(&path)
     };
     
-    // Virtual File System for .crx files
-    if path.ends_with(".crx") && target_path.is_file() {
+    // Virtual File System for .ctx files
+    if path.ends_with(".ctx") && target_path.is_file() {
         if let Ok(Some(meta_bytes)) = cortex::read_metadata(&path) {
             if let Ok(items) = serde_json::from_slice::<Vec<FileItem>>(&meta_bytes) {
                 return Ok(items);
@@ -58,7 +58,7 @@ fn list_directory(path: String) -> Result<Vec<FileItem>, String> {
         let is_dir = meta.is_dir();
         let item_type = if is_dir {
             "Folder".to_string()
-        } else if name.ends_with(".crx") {
+        } else if name.ends_with(".ctx") {
             "CORTEX Archive".to_string()
         } else {
             "File".to_string()

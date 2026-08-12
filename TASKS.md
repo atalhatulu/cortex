@@ -15,7 +15,7 @@ API SÖZLEŞMESİ (BİREBİR):
   (clap derive; açıklama: "Verify a file survives a compress/decompress roundtrip").
 - `core/src/main.rs` `Commands::Test` kolunda:
   - Geçici dizin kullan (std::env::temp_dir + process id + rastgele ek).
-  - `compress_file(input, tmp.crx)` sonra `decompress_file(tmp.crx, tmp.out)` çağır.
+  - `compress_file(input, tmp.ctx)` sonra `decompress_file(tmp.ctx, tmp.out)` çağır.
   - İki dosyayı `fs::read` ile karşılaştır (akıllıca: boyut farkıysa erken fail).
   - Başarı: `PASS: <input> roundtripped byte-exact (<n> bytes)` (exit 0).
   - Fark varsa: `FAIL: <input> differs after roundtrip` + `cmp` benzeri ilk fark

@@ -40,8 +40,8 @@
 ```bash
 cargo test --release                                   # roundtrip bit-exact
 cargo build --release
-./target/release/cortex compress data/enwik8 /tmp/crx_o6.crx -o 6   # Hedef ölçüm
-ls -la /tmp/crx_o6.crx                                 # boyut raporla
+./target/release/cortex compress data/enwik8 /tmp/crx_o6.ctx -o 6   # Hedef ölçüm
+ls -la /tmp/crx_o6.ctx                                 # boyut raporla
 ```
 - Her adım sonunda boyutu yaz: önceki boyut → yeni boyut, fark.
 - Regresyon görürsen o değişikliği geri al, bir sonraki adıma geç.

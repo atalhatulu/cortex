@@ -13,7 +13,7 @@ pub enum Commands {
     Compress {
         /// The input file to compress
         input: String,
-        /// The output file path (optional, defaults to <input>.crx)
+        /// The output file path (optional, defaults to <input>.ctx)
         output: Option<String>,
         /// Compression level: 1 = fastest (1 MB blocks), 3 = 16 MB blocks, 9 = smallest (64 MB blocks)
         #[arg(short, long, default_value_t = 3)]
@@ -42,7 +42,7 @@ pub enum Commands {
     },
     /// Decompress a file
     Decompress {
-        /// The input .crx file to decompress
+        /// The input .ctx file to decompress
         input: String,
         /// The output file path (optional, defaults to original name or <input>.out)
         output: Option<String>,
@@ -64,7 +64,7 @@ pub enum Commands {
     },
     /// Show archive header information
     Info {
-        /// The input .crx file to inspect
+        /// The input .ctx file to inspect
         input: String,
     },
     /// Verify a file survives a compress/decompress roundtrip

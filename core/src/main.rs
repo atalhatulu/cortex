@@ -42,7 +42,7 @@ fn main() -> std::io::Result<()> {
     match cli.command {
         Commands::Compress { input, output, level, password, split, threads, force, quiet, verbose, fast } => {
             setup_threads(threads);
-            let out_file = output.unwrap_or_else(|| format!("{}.crx", input));
+            let out_file = output.unwrap_or_else(|| format!("{}.ctx", input));
             check_force(&out_file, force)?;
             
             let pb = if quiet {
@@ -115,7 +115,7 @@ fn main() -> std::io::Result<()> {
             let out_file = output.unwrap_or_else(|| {
                 let mut stem = input.to_string();
                 let mut changed = false;
-                // Normalize a split-volume path (archive.crx.001, archive.crx.002, …)
+                // Normalize a split-volume path (archive.ctx.001, archive.ctx.002, …)
                 // to its base name so restore produces the original filename.
                 if stem.len() >= 4
                     && stem.as_bytes()[stem.len() - 4] == b'.'
@@ -124,7 +124,7 @@ fn main() -> std::io::Result<()> {
                     stem.truncate(stem.len() - 4);
                     changed = true;
                 }
-                if stem.ends_with(".crx") {
+                if stem.ends_with(".ctx") {
                     stem.truncate(stem.len() - 4);
                     changed = true;
                 }
@@ -268,7 +268,7 @@ fn main() -> std::io::Result<()> {
             let tmp_dir = std::env::temp_dir()
                 .join(format!("cortex-test-{}-{}", std::process::id(), nanos));
             std::fs::create_dir_all(&tmp_dir)?;
-            let crx_path = tmp_dir.join("test.crx");
+            let crx_path = tmp_dir.join("test.ctx");
             let out_path = tmp_dir.join("test.out");
 
             let ok = (|| -> std::io::Result<bool> {

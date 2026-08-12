@@ -63,7 +63,7 @@ fn test_roundtrip_random() {
 #[test]
 fn test_file_api_roundtrip() {
     let input_path = "tests/test_in.bin";
-    let comp_path = "tests/test_comp.crx";
+    let comp_path = "tests/test_comp.ctx";
     let dec_path = "tests/test_out.bin";
 
     fs::write(input_path, b"file api roundtrip test string over multiple blocks maybe?").unwrap();

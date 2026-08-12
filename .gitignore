@@ -6,7 +6,7 @@
 Cargo.lock
 
 # Test and Output Files
-*.crx
+*.ctx
 *.out
 /tmp/
 enwik8
