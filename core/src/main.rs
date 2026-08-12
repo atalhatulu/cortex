@@ -315,14 +315,14 @@ fn main() -> std::io::Result<()> {
             let tmp_dir =
                 std::env::temp_dir().join(format!("cortex-test-{}-{}", std::process::id(), nanos));
             std::fs::create_dir_all(&tmp_dir)?;
-            let crx_path = tmp_dir.join("test.ctx");
+            let ctx_path = tmp_dir.join("test.ctx");
             let out_path = tmp_dir.join("test.out");
 
             let ok = (|| -> std::io::Result<bool> {
-                let crx = crx_path.to_string_lossy();
+                let ctx = ctx_path.to_string_lossy();
                 let out = out_path.to_string_lossy();
-                cortex::compress_file(&input, &crx)?;
-                cortex::decompress_file(&crx, &out)?;
+                cortex::compress_file(&input, &ctx)?;
+                cortex::decompress_file(&ctx, &out)?;
 
                 let orig = std::fs::read(&input)?;
                 let round = std::fs::read(&out_path)?;
