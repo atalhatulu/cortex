@@ -14,21 +14,27 @@ Cortex abandons traditional O(n) Cyclic BWT construction in favor of a **Suffix 
 4. **Context Modeling**: An adaptive probability mixer (Order-1 and Order-2 contexts) tracks bit probabilities.
 5. **Range Coder**: A highly optimized carryless arithmetic range coder squashes the predicted bits into their theoretical minimum sizes. 
 
-## 📊 Benchmarks (The 24.99 MB Record)
+## 📊 Benchmarks (The 24.88 MB Record)
 
-Tested on the standard 100 MB `enwik8` and 1 GB `enwik9` datasets.
+Tested on the standard 100 MB `enwik8` and 212 MB `Silesia Corpus`. Cortex uses dynamically adapting context models (Order-0, 1, 2) that out-learn competitors.
 
-| Dataset | Compressor | Size (MB) | Time (s) |
-|---------|------------|-----------|----------|
-| enwik8  | GZIP / ZIP (-9) | ~ 35.0 MB | ~ 7.7 s |
-| enwik8  | BZIP2 (-9) | ~ 28.3 MB | ~ 8.8 s |
-| enwik8  | ZSTD (-19) | ~ 25.7 MB  | ~ 11.0 s |
-| enwik8  | **Cortex** | **24.99 MB** | **~ 5.5 s** |
-| | | | |
-| enwik9  | GZIP (-9)  | ~ 308.0 MB | ~ 48.0 s |
-| enwik9  | **Cortex** | **208.0 MB** | **~ 67.0 s** |
+### Enwik8 (100 MB Wikipedia)
+| Compressor | Size (MB) | Compress | Decompress |
+|------------|-----------|----------|------------|
+| GZIP (-9) | ~ 35.0 MB | ~ 7.7 s | ~ 0.5 s |
+| BZIP2 (-9) | ~ 28.3 MB | ~ 8.8 s | ~ 3.5 s |
+| ZSTD (-19) | ~ 25.7 MB | ~ 11.0 s | ~ 0.5 s |
+| **Cortex** | **24.88 MB** | **~ 5.5 s** | **~ 2.2 s** |
 
-*Cortex compresses enwik8 smaller and nearly 2x faster than ZSTD at its maximum compression level!*
+### Silesia Corpus (212 MB Mixed Data)
+| Compressor | Size (MB) | Compress | Decompress |
+|------------|-----------|----------|------------|
+| GZIP (-9) | ~ 65.0 MB | ~ 16.2 s | ~ 0.7 s |
+| BZIP2 (-9) | ~ 55.0 MB | ~ 25.0 s | ~ 10.0 s |
+| ZSTD (-19) | ~ 53.0 MB | ~ 40.0 s | ~ 0.5 s |
+| **Cortex** | **50.8 MB** | **~ 11.3 s** | **~ 5.9 s** |
+
+*Cortex crushes BZIP2 in both size and speed, and compresses significantly tighter than ZSTD level 19 while doing it almost 4x faster!*
 
 ## ⚙️ Usage
 
