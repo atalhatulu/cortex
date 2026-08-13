@@ -355,7 +355,7 @@ where
     callback(0, orig_len);
 
     let total_threads = num_cpus::get();
-    let stage1_threads = std::cmp::max(1, total_threads / 2);
+    let stage1_threads = std::cmp::max(1, (total_threads * 2) / 3); // Prioritize stage 1 (Entropy)
     let stage2_threads = std::cmp::max(1, total_threads - stage1_threads);
 
     let pool1 = rayon::ThreadPoolBuilder::new()
