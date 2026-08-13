@@ -193,7 +193,7 @@ async fn compress_cmd(app: AppHandle, input_paths: Vec<String>, output_path: Str
         let pwd_ref = pwd_clone.as_deref();
         // Block size is derived from `level` inside the library
         // (`block_size_for_level`), the single source of truth.
-        cortex::compress_file_with_progress(&temp_tar_clone, &out_clone, Some(&meta_json), pwd_ref, level, split_size, |processed, total| {
+        cortex::compress_file_with_progress(&temp_tar_clone, &out_clone, Some(&meta_json), pwd_ref, level, split_size, false, false, |processed, total| {
             let _ = app.emit("progress", ProgressPayload {
                 processed,
                 total,

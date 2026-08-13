@@ -15,15 +15,18 @@ pub enum Commands {
         input: String,
         /// The output file path (optional, defaults to <input>.ctx)
         output: Option<String>,
-        /// Compression level: 1 = fastest (1 MB blocks), 3 = 16 MB blocks, 9 = smallest (64 MB blocks)
-        #[arg(short, long, default_value_t = 3)]
-        level: u8,
+        /// Compression level. BWT mode: 1=1MB 2=4MB 3=16MB 9=64MB blocks. Zstd fast mode: zstd compression level (default 19).
+        #[arg(short, long)]
+        level: Option<u8>,
         /// Password for encryption (optional)
         #[arg(short, long)]
         password: Option<String>,
         /// Use Fast Mode (LZ + rANS) instead of Maximum Mode (BWT + CM)
         #[arg(long, default_value_t = false)]
         fast: bool,
+        /// Use BWT+tANS balance mode (CTXT) instead of BWT+range-coder (CTX8) or Zstd fast mode (CTXF)
+        #[arg(long, default_value_t = false)]
+        tans: bool,
         /// Split archive into volumes of given size in MB (0 to disable)
         #[arg(short, long, default_value_t = 0)]
         split: usize,
