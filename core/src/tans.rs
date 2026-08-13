@@ -32,6 +32,7 @@ fn normalize_counts(hist: &[u32; 257]) -> [u16; 257] {
 
     let mut norm = [0u16; 257];
     if total == 0 {
+        norm[0] = TABLE_SIZE as u16;
         return norm;
     }
 
@@ -255,8 +256,22 @@ impl<'a> BackwardBitReader<'a> {
     }
 }
 
-pub fn encode(hist: &[u32; 257], tokens: &[u16]) -> Vec<u8> {
-    let mut out = vec![0u8; 1028 + tokens.len() * 2 + 16];
+pub struct Order1Tables {
+    tables: Vec<TansTable>,
+}
+
+pub fn build_order1(hist: &[u32; 257], hist2d: &[[u32; 257]; 256]) -> Order1Tables {
+    let mut tables = Vec::with_capacity(257);
+    for ctx in 0..256 {
+        tables.push(build_tables(&hist2d[ctx]));
+    }
+    tables.push(build_tables(hist));
+    Order1Tables { tables }
+}
+
+pub fn encode(hist: &[u32; 257], hist2d: &[[u32; 257]; 256], tokens: &[u16]) -> Vec<u8> {
+    let hist_size = 1028;
+    let mut out = vec![0u8; hist_size + tokens.len() * 2 + 16];
     
     for i in 0..257 {
         let bytes = hist[i].to_le_bytes();
@@ -264,18 +279,32 @@ pub fn encode(hist: &[u32; 257], tokens: &[u16]) -> Vec<u8> {
     }
     
     if tokens.is_empty() {
-        out.truncate(1028);
+        out.truncate(hist_size);
         return out;
     }
     
-    let tables = build_tables(hist);
+    let order1_tables = build_order1(hist, hist2d);
     let mut state = TABLE_SIZE;
     
-    let mut writer = ForwardByteWriter::new(&mut out[1028..]);
+    let mut writer = ForwardByteWriter::new(&mut out[hist_size..]);
     
-    for &token in tokens.iter().rev() {
+    let mut ctxs = Vec::with_capacity(tokens.len());
+    let mut prev = 256;
+    for &token in tokens {
+        ctxs.push(prev);
+        if token <= 255 {
+            prev = token as usize;
+        }
+    }
+    
+    for i in (0..tokens.len()).rev() {
+        let token = tokens[i];
+        let ctx = ctxs[i];
         let s = token as usize;
+        
+        let tables = &order1_tables.tables[ctx];
         let meta = &tables.symbols_meta[s];
+        
         let nb_bits = if state < meta.threshold as usize {
             meta.k - 1
         } else {
@@ -292,11 +321,11 @@ pub fn encode(hist: &[u32; 257], tokens: &[u16]) -> Vec<u8> {
     writer.push_bits(state as u16, (TABLE_BITS + 1) as u8);
     let bytes_written = writer.flush();
     
-    out.truncate(1028 + bytes_written);
+    out.truncate(hist_size + bytes_written);
     out
 }
 
-pub fn decode(hist: &[u32; 257], len: usize, bytes: &[u8]) -> Result<Vec<u16>> {
+pub fn decode(hist: &[u32; 257], hist2d: &[[u32; 257]; 256], len: usize, bytes: &[u8]) -> Result<Vec<u16>> {
     if len == 0 {
         return Ok(Vec::new());
     }
@@ -305,7 +334,7 @@ pub fn decode(hist: &[u32; 257], len: usize, bytes: &[u8]) -> Result<Vec<u16>> {
         return Err(Error::new(ErrorKind::InvalidData, "Empty payload for non-zero length"));
     }
     
-    let tables = build_tables(hist);
+    let order1_tables = build_order1(hist, hist2d);
     let mut reader = BackwardBitReader::new(bytes)?;
     
     let mut state = reader.pull_bits((TABLE_BITS + 1) as u8) as usize;
@@ -315,11 +344,18 @@ pub fn decode(hist: &[u32; 257], len: usize, bytes: &[u8]) -> Result<Vec<u16>> {
     state -= TABLE_SIZE;
     
     let mut tokens = Vec::with_capacity(len);
+    let mut prev = 256;
     for _ in 0..len {
+        let tables = &order1_tables.tables[prev];
         let entry = &tables.decode_table[state];
         let bits = reader.pull_bits(entry.nb_bits);
         state = entry.new_x as usize + bits as usize;
-        tokens.push(entry.symbol);
+        let symbol = entry.symbol;
+        tokens.push(symbol);
+        
+        if symbol <= 255 {
+            prev = symbol as usize;
+        }
     }
     
     Ok(tokens)
@@ -333,12 +369,20 @@ mod tests {
     fn test_tans_roundtrip() {
         let tokens: Vec<u16> = vec![0, 1, 2, 0, 1, 2, 256, 128, 0, 1, 1, 1, 5, 10];
         let mut hist = [0u32; 257];
+        let mut hist2d = Box::new([[0u32; 257]; 256]);
+        let mut prev = 256;
         for &t in &tokens {
             hist[t as usize] += 1;
+            if prev < 256 {
+                hist2d[prev][t as usize] += 1;
+            }
+            if t <= 255 {
+                prev = t as usize;
+            }
         }
 
-        let encoded = encode(&hist, &tokens);
-        let decoded = decode(&hist, tokens.len(), &encoded[1028..]).unwrap();
+        let encoded = encode(&hist, &*hist2d, &tokens);
+        let decoded = decode(&hist, &*hist2d, tokens.len(), &encoded[1028..]).unwrap();
         assert_eq!(tokens, decoded);
     }
 
@@ -346,12 +390,20 @@ mod tests {
     fn test_tans_same_token() {
         let tokens: Vec<u16> = vec![42; 1000];
         let mut hist = [0u32; 257];
+        let mut hist2d = Box::new([[0u32; 257]; 256]);
+        let mut prev = 256;
         for &t in &tokens {
             hist[t as usize] += 1;
+            if prev < 256 {
+                hist2d[prev][t as usize] += 1;
+            }
+            if t <= 255 {
+                prev = t as usize;
+            }
         }
 
-        let encoded = encode(&hist, &tokens);
-        let decoded = decode(&hist, tokens.len(), &encoded[1028..]).unwrap();
+        let encoded = encode(&hist, &*hist2d, &tokens);
+        let decoded = decode(&hist, &*hist2d, tokens.len(), &encoded[1028..]).unwrap();
         assert_eq!(tokens, decoded);
     }
 
@@ -359,9 +411,10 @@ mod tests {
     fn test_tans_empty() {
         let tokens: Vec<u16> = vec![];
         let hist = [0u32; 257];
+        let hist2d = Box::new([[0u32; 257]; 256]);
 
-        let encoded = encode(&hist, &tokens);
-        let decoded = decode(&hist, tokens.len(), &encoded[1028..]).unwrap();
+        let encoded = encode(&hist, &*hist2d, &tokens);
+        let decoded = decode(&hist, &*hist2d, tokens.len(), &encoded[1028..]).unwrap();
         assert_eq!(tokens, decoded);
     }
 }
