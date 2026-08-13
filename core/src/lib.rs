@@ -6,6 +6,7 @@ pub mod split_io;
 
 pub const MAGIC: &[u8; 4] = b"CTX8";
 pub const MAGIC_FAST: &[u8; 4] = b"CTXF";
+pub const MAGIC_TANS: &[u8; 4] = b"CTXT";
 
 use rayon::prelude::*;
 use std::fs;
@@ -76,7 +77,7 @@ pub struct Stats {
 }
 
 pub fn compress_file(input: &str, output: &str) -> std::io::Result<Stats> {
-    compress_file_with_progress(input, output, None, None, 3, 0, false, |_, _| {})
+    compress_file_with_progress(input, output, None, None, 3, 0, false, false, |_, _| {})
 }
 
 pub fn decompress_file(input: &str, output: &str) -> std::io::Result<Stats> {
@@ -91,6 +92,7 @@ pub fn compress_file_with_progress<F>(
     _level: u8,
     _split_size: usize,
     fast: bool,
+    tans: bool,
     mut callback: F,
 ) -> std::io::Result<Stats>
 where
@@ -98,6 +100,13 @@ where
 {
     use split_io::SplitWriter;
     use std::io::{Read, Write};
+
+    if tans {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "CTXT mode not yet implemented",
+        ));
+    }
 
     let mut in_file = fs::File::open(input)?;
     let start = Instant::now();
@@ -119,7 +128,7 @@ where
     let encrypted = _password.is_some() && !_password.unwrap().is_empty();
     let flags: u8 = if encrypted { 1 } else { 0 };
 
-    let magic = if fast { MAGIC_FAST } else { MAGIC };
+    let magic = if tans { MAGIC_TANS } else if fast { MAGIC_FAST } else { MAGIC };
     out_file.write_all(magic)?;
     out_file.write_all(&(total_len as u64).to_le_bytes())?;
     out_file.write_all(&[flags])?;
@@ -178,8 +187,10 @@ where
         let compressed_batch: Vec<Vec<u8>> = batch_data
             .par_iter()
             .map(|chunk_in| {
-                if fast {
-                    zstd::encode_all(chunk_in.as_slice(), 3).unwrap()
+                if tans {
+                    unreachable!("guarded at top")
+                } else if fast {
+                    zstd::encode_all(chunk_in.as_slice(), _level as i32).unwrap()
                 } else {
                     let mut chunk = chunk_in.clone();
                     let is_exec = filters::is_executable(&chunk);
@@ -268,6 +279,14 @@ where
 
     let is_ctx8 = &header[0..4] == MAGIC;
     let is_fast = &header[0..4] == MAGIC_FAST;
+    let is_tans = &header[0..4] == MAGIC_TANS;
+
+    if is_tans {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "CTXT mode not implemented yet",
+        ));
+    }
 
     if !is_ctx8 && !is_fast {
         return Err(std::io::Error::new(
@@ -526,8 +545,9 @@ pub fn read_metadata(input: &str) -> std::io::Result<Option<Vec<u8>>> {
 
     let is_ctx8 = &header[0..4] == MAGIC;
     let is_fast = &header[0..4] == MAGIC_FAST;
+    let is_tans = &header[0..4] == MAGIC_TANS;
 
-    if !is_ctx8 && !is_fast {
+    if !is_ctx8 && !is_fast && !is_tans {
         return Ok(None);
     }
 

@@ -57,6 +57,7 @@ fn main() -> std::io::Result<()> {
             quiet,
             verbose,
             fast,
+            tans,
         } => {
             setup_threads(threads);
             let out_file = output.unwrap_or_else(|| format!("{}.ctx", input));
@@ -74,6 +75,12 @@ fn main() -> std::io::Result<()> {
 
             let mut init = false;
             let pwd_ref = password.as_deref();
+
+            let level_val = if fast {
+                level.unwrap_or(19)
+            } else {
+                level.unwrap_or(3)
+            };
 
             // `split` comes from the CLI in MB (see cli.rs). The library API
             // `compress_file_with_progress` expects split_size in bytes, so we
@@ -97,9 +104,10 @@ fn main() -> std::io::Result<()> {
                 &out_file,
                 Some(meta_bytes.as_slice()), // metadata
                 pwd_ref,     // password
-                level,       // level
+                level_val,   // level
                 split_bytes, // split_size (bytes)
                 fast,        // fast mode
+                tans,        // tans mode
                 |processed, total| {
                     if !quiet {
                         if !init {
