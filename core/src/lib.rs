@@ -1,4 +1,5 @@
 pub mod crypto;
+pub mod content;
 pub mod filters;
 pub mod mtf;
 pub mod rangecoder;
@@ -182,6 +183,11 @@ where
             .par_iter()
             .map(|chunk_in| {
                 if tans {
+                    if content::classify(chunk_in).is_already_compressed() {
+                        let mut chunk = chunk_in.clone();
+                        store_block(&mut chunk);
+                        chunk
+                    } else {
                     let mut chunk = chunk_in.clone();
                     let is_exec = filters::is_executable(&chunk);
                     if is_exec {
@@ -231,34 +237,41 @@ where
                     final_out.append(&mut out);
 
                     final_out
+                    }
                 } else if fast {
                     zstd::encode_all(chunk_in.as_slice(), _level as i32).unwrap()
                 } else {
-                    let mut chunk = chunk_in.clone();
-                    let is_exec = filters::is_executable(&chunk);
-                    if is_exec {
-                        filters::e8e9_filter(&mut chunk, true);
+                    if content::classify(chunk_in).is_already_compressed() {
+                        let mut chunk = chunk_in.clone();
+                        store_block(&mut chunk);
+                        chunk
+                    } else {
+                        let mut chunk = chunk_in.clone();
+                        let is_exec = filters::is_executable(&chunk);
+                        if is_exec {
+                            filters::e8e9_filter(&mut chunk, true);
+                        }
+
+                        let (pidx, tokens) = mtf::bwt_mtf_rle(&chunk);
+                        let mut num_tokens = tokens.len() as u32;
+                        if is_exec {
+                            num_tokens |= 1 << 31;
+                        }
+
+                        let mut enc = rangecoder::Encoder::new();
+                        let mut model = mtf::MtfModel::new();
+                        model.encode_tokens(&mut enc, &tokens);
+                        let mut out = enc.finish();
+
+                        let mut final_out = Vec::with_capacity(36 + out.len());
+                        for i in 0..mtf::LANES {
+                            final_out.extend_from_slice(&pidx[i].to_le_bytes());
+                        }
+                        final_out.extend_from_slice(&num_tokens.to_le_bytes());
+                        final_out.append(&mut out);
+
+                        final_out
                     }
-
-                    let (pidx, tokens) = mtf::bwt_mtf_rle(&chunk);
-                    let mut num_tokens = tokens.len() as u32;
-                    if is_exec {
-                        num_tokens |= 1 << 31;
-                    }
-
-                    let mut enc = rangecoder::Encoder::new();
-                    let mut model = mtf::MtfModel::new();
-                    model.encode_tokens(&mut enc, &tokens);
-                    let mut out = enc.finish();
-
-                    let mut final_out = Vec::with_capacity(36 + out.len());
-                    for i in 0..mtf::LANES {
-                        final_out.extend_from_slice(&pidx[i].to_le_bytes());
-                    }
-                    final_out.extend_from_slice(&num_tokens.to_le_bytes());
-                    final_out.append(&mut out);
-
-                    final_out
                 }
             })
             .collect();
@@ -297,6 +310,8 @@ enum DecompressStage1 {
         is_exec: bool,
         size: usize,
     },
+    /// Raw block that was stored without entropy (already-compressed content).
+    Stored(Vec<u8>),
 }
 
 pub fn decompress_file_with_progress<F>(
@@ -482,40 +497,54 @@ where
                                     u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
                                 ptr += 4;
 
+                                let is_stored = (num_tokens & (1 << 30)) != 0;
                                 let is_exec = (num_tokens & (1 << 31)) != 0;
-                                num_tokens &= !(1 << 31);
+                                num_tokens &= !(1 << 31) & !(1 << 30);
 
-                                let comp_len = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap()) as usize;
-                                ptr += 4;
-                                let comp_hist2d = &chunk[ptr..ptr+comp_len];
-                                ptr += comp_len;
-                                let raw_hist2d = match zstd::decode_all(comp_hist2d) {
-                                    Ok(d) => d,
-                                    Err(_) => return stage1_tx.send((chunk_idx, Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to decompress hist2d")))).map_err(|_| ()),
-                                };
-                                let mut hist2d = Box::new([[0u32; 257]; 256]);
-                                let mut rptr = 0;
-                                for ctx in 0..256 {
-                                    for sym in 0..257 {
-                                        hist2d[ctx][sym] = u32::from_le_bytes(raw_hist2d[rptr..rptr+4].try_into().unwrap());
-                                        rptr += 4;
+                                if is_stored {
+                                    // Already-compressed block stored raw: payload is
+                                    // exactly `size` bytes of the original content.
+                                    if chunk.len() < ptr + size {
+                                        Err(std::io::Error::new(
+                                            std::io::ErrorKind::InvalidData,
+                                            "Stored block truncated",
+                                        ))
+                                    } else {
+                                        Ok(DecompressStage1::Stored(chunk[ptr..ptr + size].to_vec()))
                                     }
-                                }
-
-                                let mut hist = [0u32; 257];
-                                for i in 0..257 {
-                                    hist[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
+                                } else {
+                                    let comp_len = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap()) as usize;
                                     ptr += 4;
-                                }
+                                    let comp_hist2d = &chunk[ptr..ptr+comp_len];
+                                    ptr += comp_len;
+                                    let raw_hist2d = match zstd::decode_all(comp_hist2d) {
+                                        Ok(d) => d,
+                                        Err(_) => return stage1_tx.send((chunk_idx, Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to decompress hist2d")))).map_err(|_| ()),
+                                    };
+                                    let mut hist2d = Box::new([[0u32; 257]; 256]);
+                                    let mut rptr = 0;
+                                    for ctx in 0..256 {
+                                        for sym in 0..257 {
+                                            hist2d[ctx][sym] = u32::from_le_bytes(raw_hist2d[rptr..rptr+4].try_into().unwrap());
+                                            rptr += 4;
+                                        }
+                                    }
 
-                                match crate::tans::decode(&hist, &*hist2d, num_tokens as usize, &chunk[ptr..]) {
-                                    Ok(tokens) => Ok(DecompressStage1::Normal {
-                                        pidx,
-                                        tokens,
-                                        is_exec,
-                                        size,
-                                    }),
-                                    Err(e) => Err(e),
+                                    let mut hist = [0u32; 257];
+                                    for i in 0..257 {
+                                        hist[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
+                                        ptr += 4;
+                                    }
+
+                                    match crate::tans::decode(&hist, &*hist2d, num_tokens as usize, &chunk[ptr..]) {
+                                        Ok(tokens) => Ok(DecompressStage1::Normal {
+                                            pidx,
+                                            tokens,
+                                            is_exec,
+                                            size,
+                                        }),
+                                        Err(e) => Err(e),
+                                    }
                                 }
                             }
                         } else {
@@ -535,20 +564,34 @@ where
                                     u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
                                 ptr += 4;
 
+                                let is_stored = (num_tokens & (1 << 30)) != 0;
                                 let is_exec = (num_tokens & (1 << 31)) != 0;
-                                num_tokens &= !(1 << 31);
+                                num_tokens &= !(1 << 31) & !(1 << 30);
 
-                                let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
-                                let mut model = mtf::MtfModel::new();
+                                if is_stored {
+                                    if chunk.len() < ptr + size {
+                                        Err(std::io::Error::new(
+                                            std::io::ErrorKind::InvalidData,
+                                            "Stored block truncated",
+                                        ))
+                                    } else {
+                                        Ok(DecompressStage1::Stored(
+                                            chunk[ptr..ptr + size].to_vec(),
+                                        ))
+                                    }
+                                } else {
+                                    let mut dec = rangecoder::Decoder::new(&chunk[ptr..]);
+                                    let mut model = mtf::MtfModel::new();
 
-                                match model.decode_tokens(&mut dec, num_tokens as usize) {
-                                    Ok(tokens) => Ok(DecompressStage1::Normal {
-                                        pidx,
-                                        tokens,
-                                        is_exec,
-                                        size,
-                                    }),
-                                    Err(e) => Err(e),
+                                    match model.decode_tokens(&mut dec, num_tokens as usize) {
+                                        Ok(tokens) => Ok(DecompressStage1::Normal {
+                                            pidx,
+                                            tokens,
+                                            is_exec,
+                                            size,
+                                        }),
+                                        Err(e) => Err(e),
+                                    }
                                 }
                             }
                         };
@@ -570,6 +613,7 @@ where
                 let final_res = match stage1_res {
                     Err(e) => Err(e),
                     Ok(DecompressStage1::Fast(block)) => Ok(block),
+                    Ok(DecompressStage1::Stored(block)) => Ok(block),
                     Ok(DecompressStage1::Normal { pidx, tokens, is_exec, size }) => {
                         match mtf::decode_rle_mtf_bwt(pidx, &tokens, size) {
                             Err(e) => Err(e),
@@ -658,4 +702,23 @@ pub fn read_metadata(input: &str) -> std::io::Result<Option<Vec<u8>>> {
     }
 
     Ok(None)
+}
+
+/// Produce a `STORE` (raw) block in-place. The built blob has the same header
+/// shape as a BWT block so the decoder's `is_stored` (bit 30) branch handles it:
+///   - `pidx[8]` : all zero (no BWT)
+///   - `num_tokens`: bit 30 set (stored flag); low bits unused
+///   - then the raw block bytes verbatim
+///
+/// The decoder reads the original `size` from the container and slices exactly
+/// that many trailing bytes, so no length is encoded here.
+fn store_block(out: &mut Vec<u8>) {
+    let orig = std::mem::replace(out, Vec::new());
+    out.clear();
+    out.reserve(orig.len() + mtf::LANES * 4 + 4);
+    for _ in 0..mtf::LANES {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    out.extend_from_slice(&(1u32 << 30).to_le_bytes());
+    out.extend_from_slice(&orig);
 }
