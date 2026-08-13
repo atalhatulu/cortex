@@ -17,3 +17,5 @@ logs/
 
 # Benchmark/Test Data — lokalde tut, git e GIRMEZ (gitignored)
 /data/
+enwik9
+enwik9.zip
