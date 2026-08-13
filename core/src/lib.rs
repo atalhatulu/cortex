@@ -3,6 +3,7 @@ pub mod filters;
 pub mod mtf;
 pub mod rangecoder;
 pub mod split_io;
+pub mod tans;
 
 pub const MAGIC: &[u8; 4] = b"CTX8";
 pub const MAGIC_FAST: &[u8; 4] = b"CTXF";
@@ -101,13 +102,6 @@ where
     use split_io::SplitWriter;
     use std::io::{Read, Write};
 
-    if tans {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "CTXT mode not yet implemented",
-        ));
-    }
-
     let mut in_file = fs::File::open(input)?;
     let start = Instant::now();
     let total_len = in_file.metadata()?.len() as usize;
@@ -188,7 +182,33 @@ where
             .par_iter()
             .map(|chunk_in| {
                 if tans {
-                    unreachable!("guarded at top")
+                    let mut chunk = chunk_in.clone();
+                    let is_exec = filters::is_executable(&chunk);
+                    if is_exec {
+                        filters::e8e9_filter(&mut chunk, true);
+                    }
+
+                    let (pidx, tokens) = mtf::bwt_mtf_rle(&chunk);
+                    let mut num_tokens = tokens.len() as u32;
+                    if is_exec {
+                        num_tokens |= 1 << 31;
+                    }
+
+                    let mut hist = [0u32; 257];
+                    for &t in &tokens {
+                        hist[t as usize] += 1;
+                    }
+
+                    let mut out = crate::tans::encode(&hist, &tokens);
+
+                    let mut final_out = Vec::with_capacity(36 + out.len());
+                    for i in 0..mtf::LANES {
+                        final_out.extend_from_slice(&pidx[i].to_le_bytes());
+                    }
+                    final_out.extend_from_slice(&num_tokens.to_le_bytes());
+                    final_out.append(&mut out);
+
+                    final_out
                 } else if fast {
                     zstd::encode_all(chunk_in.as_slice(), _level as i32).unwrap()
                 } else {
@@ -281,14 +301,7 @@ where
     let is_fast = &header[0..4] == MAGIC_FAST;
     let is_tans = &header[0..4] == MAGIC_TANS;
 
-    if is_tans {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "CTXT mode not implemented yet",
-        ));
-    }
-
-    if !is_ctx8 && !is_fast {
+    if !is_ctx8 && !is_fast && !is_tans {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "Not a valid Cortex archive",
@@ -429,6 +442,42 @@ where
                                     std::io::ErrorKind::InvalidData,
                                     format!("Zstd Decompression error: {:?}", e),
                                 )),
+                            }
+                        } else if is_tans {
+                            if chunk.len() < (mtf::LANES * 4) + 4 + 1028 {
+                                Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Chunk too small for headers",
+                                ))
+                            } else {
+                                let mut pidx = [0u32; mtf::LANES];
+                                let mut ptr = 0;
+                                for i in 0..mtf::LANES {
+                                    pidx[i] = u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
+                                    ptr += 4;
+                                }
+                                let mut num_tokens =
+                                    u32::from_le_bytes(chunk[ptr..ptr + 4].try_into().unwrap());
+                                ptr += 4;
+
+                                let is_exec = (num_tokens & (1 << 31)) != 0;
+                                num_tokens &= !(1 << 31);
+
+                                let mut hist = [0u32; 257];
+                                for i in 0..257 {
+                                    hist[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
+                                    ptr += 4;
+                                }
+
+                                match crate::tans::decode(&hist, num_tokens as usize, &chunk[ptr..]) {
+                                    Ok(tokens) => Ok(DecompressStage1::Normal {
+                                        pidx,
+                                        tokens,
+                                        is_exec,
+                                        size,
+                                    }),
+                                    Err(e) => Err(e),
+                                }
                             }
                         } else {
                             if chunk.len() < (mtf::LANES * 4) + 4 {
