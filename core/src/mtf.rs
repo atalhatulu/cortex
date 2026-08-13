@@ -297,13 +297,14 @@ pub fn decode_rle_mtf_bwt(
         sum += counts[j];
     }
 
-    let mut t_arr = vec![0u64; n];
+    let mut t_arr = vec![0u32; n];
 
     // BWT without EOF symbol requires `pidx` (which corresponds to sa_i == 0)
     // to be processed first for its character class so the LF mapping aligns correctly.
     let real_pidx = pidx[0] as usize;
     let c_last = bwt[real_pidx] as usize;
-    t_arr[real_pidx] = ((c_last as u64) << 32) | (start[c_last] as u64);
+    debug_assert!(start[c_last] < (1 << 24));
+    t_arr[real_pidx] = ((c_last as u32) << 24) | (start[c_last] as u32);
     start[c_last] += 1;
 
     unsafe {
@@ -312,7 +313,8 @@ pub fn decode_rle_mtf_bwt(
                 continue;
             }
             let b = *bwt.get_unchecked(j) as usize;
-            *t_arr.get_unchecked_mut(j) = ((b as u64) << 32) | (*start.get_unchecked(b) as u64);
+            debug_assert!(*start.get_unchecked(b) < (1 << 24));
+            *t_arr.get_unchecked_mut(j) = ((b as u32) << 24) | (*start.get_unchecked(b) as u32);
             *start.get_unchecked_mut(b) += 1;
         }
     }
@@ -343,8 +345,8 @@ pub fn decode_rle_mtf_bwt(
             let offset = out_starts[lane] + min_len;
             while rem > 0 {
                 let val = *t_arr.get_unchecked(p[lane] as usize);
-                *chunk_out.get_unchecked_mut(offset + rem - 1) = (val >> 32) as u8;
-                p[lane] = (val & 0xFFFF_FFFF) as u32;
+                *chunk_out.get_unchecked_mut(offset + rem - 1) = (val >> 24) as u8;
+                p[lane] = val & 0x00FF_FFFF;
                 rem -= 1;
             }
         }
@@ -371,36 +373,36 @@ pub fn decode_rle_mtf_bwt(
 
         for j in (0..min_len).rev() {
             let v0 = *t_arr.get_unchecked(p0);
-            *chunk_out.get_unchecked_mut(out0 + j) = (v0 >> 32) as u8;
-            p0 = (v0 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out0 + j) = (v0 >> 24) as u8;
+            p0 = (v0 & 0x00FF_FFFF) as usize;
 
             let v1 = *t_arr.get_unchecked(p1);
-            *chunk_out.get_unchecked_mut(out1 + j) = (v1 >> 32) as u8;
-            p1 = (v1 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out1 + j) = (v1 >> 24) as u8;
+            p1 = (v1 & 0x00FF_FFFF) as usize;
 
             let v2 = *t_arr.get_unchecked(p2);
-            *chunk_out.get_unchecked_mut(out2 + j) = (v2 >> 32) as u8;
-            p2 = (v2 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out2 + j) = (v2 >> 24) as u8;
+            p2 = (v2 & 0x00FF_FFFF) as usize;
 
             let v3 = *t_arr.get_unchecked(p3);
-            *chunk_out.get_unchecked_mut(out3 + j) = (v3 >> 32) as u8;
-            p3 = (v3 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out3 + j) = (v3 >> 24) as u8;
+            p3 = (v3 & 0x00FF_FFFF) as usize;
 
             let v4 = *t_arr.get_unchecked(p4);
-            *chunk_out.get_unchecked_mut(out4 + j) = (v4 >> 32) as u8;
-            p4 = (v4 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out4 + j) = (v4 >> 24) as u8;
+            p4 = (v4 & 0x00FF_FFFF) as usize;
 
             let v5 = *t_arr.get_unchecked(p5);
-            *chunk_out.get_unchecked_mut(out5 + j) = (v5 >> 32) as u8;
-            p5 = (v5 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out5 + j) = (v5 >> 24) as u8;
+            p5 = (v5 & 0x00FF_FFFF) as usize;
 
             let v6 = *t_arr.get_unchecked(p6);
-            *chunk_out.get_unchecked_mut(out6 + j) = (v6 >> 32) as u8;
-            p6 = (v6 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out6 + j) = (v6 >> 24) as u8;
+            p6 = (v6 & 0x00FF_FFFF) as usize;
 
             let v7 = *t_arr.get_unchecked(p7);
-            *chunk_out.get_unchecked_mut(out7 + j) = (v7 >> 32) as u8;
-            p7 = (v7 & 0xFFFF_FFFF) as usize;
+            *chunk_out.get_unchecked_mut(out7 + j) = (v7 >> 24) as u8;
+            p7 = (v7 & 0x00FF_FFFF) as usize;
         }
     }
 

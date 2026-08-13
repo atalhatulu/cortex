@@ -195,17 +195,39 @@ where
                     }
 
                     let mut hist = [0u32; 257];
+                    let mut hist2d = Box::new([[0u32; 257]; 256]);
+                    let mut prev = 256;
                     for &t in &tokens {
                         hist[t as usize] += 1;
+                        if prev < 256 {
+                            hist2d[prev][t as usize] += 1;
+                        }
+                        if t <= 255 {
+                            prev = t as usize;
+                        }
                     }
 
-                    let mut out = crate::tans::encode(&hist, &tokens);
+                    let mut out = crate::tans::encode(&hist, &*hist2d, &tokens);
 
-                    let mut final_out = Vec::with_capacity(36 + out.len());
+                    let mut raw_hist2d = vec![0u8; 256 * 257 * 4];
+                    let mut rptr = 0;
+                    for ctx in 0..256 {
+                        for sym in 0..257 {
+                            let bytes = hist2d[ctx][sym].to_le_bytes();
+                            raw_hist2d[rptr..rptr+4].copy_from_slice(&bytes);
+                            rptr += 4;
+                        }
+                    }
+                    let comp_hist2d = zstd::encode_all(raw_hist2d.as_slice(), 3).unwrap();
+                    let comp_len = comp_hist2d.len() as u32;
+
+                    let mut final_out = Vec::with_capacity(36 + 4 + comp_hist2d.len() + out.len());
                     for i in 0..mtf::LANES {
                         final_out.extend_from_slice(&pidx[i].to_le_bytes());
                     }
                     final_out.extend_from_slice(&num_tokens.to_le_bytes());
+                    final_out.extend_from_slice(&comp_len.to_le_bytes());
+                    final_out.extend_from_slice(&comp_hist2d);
                     final_out.append(&mut out);
 
                     final_out
@@ -444,7 +466,7 @@ where
                                 )),
                             }
                         } else if is_tans {
-                            if chunk.len() < (mtf::LANES * 4) + 4 + 1028 {
+                            if chunk.len() < (mtf::LANES * 4) + 4 + 4 + 1028 {
                                 Err(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
                                     "Chunk too small for headers",
@@ -463,13 +485,30 @@ where
                                 let is_exec = (num_tokens & (1 << 31)) != 0;
                                 num_tokens &= !(1 << 31);
 
+                                let comp_len = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap()) as usize;
+                                ptr += 4;
+                                let comp_hist2d = &chunk[ptr..ptr+comp_len];
+                                ptr += comp_len;
+                                let raw_hist2d = match zstd::decode_all(comp_hist2d) {
+                                    Ok(d) => d,
+                                    Err(_) => return stage1_tx.send((chunk_idx, Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to decompress hist2d")))).map_err(|_| ()),
+                                };
+                                let mut hist2d = Box::new([[0u32; 257]; 256]);
+                                let mut rptr = 0;
+                                for ctx in 0..256 {
+                                    for sym in 0..257 {
+                                        hist2d[ctx][sym] = u32::from_le_bytes(raw_hist2d[rptr..rptr+4].try_into().unwrap());
+                                        rptr += 4;
+                                    }
+                                }
+
                                 let mut hist = [0u32; 257];
                                 for i in 0..257 {
                                     hist[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
                                     ptr += 4;
                                 }
 
-                                match crate::tans::decode(&hist, num_tokens as usize, &chunk[ptr..]) {
+                                match crate::tans::decode(&hist, &*hist2d, num_tokens as usize, &chunk[ptr..]) {
                                     Ok(tokens) => Ok(DecompressStage1::Normal {
                                         pidx,
                                         tokens,
