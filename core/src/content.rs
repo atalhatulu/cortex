@@ -125,17 +125,20 @@ pub fn block_entropy(data: &[u8]) -> f64 {
 /// - Executable header detection for the E8/E9 pre-pass.
 /// - Otherwise entropy heuristic: high entropy => already-compressed.
 pub fn classify(data: &[u8]) -> ContentKind {
-    if data.len() < MIN_SAMPLE_SIZE {
-        return ContentKind::Binary;
-    }
     let sample = &data[..data.len().min(SAMPLE_BYTES)];
 
     // Executable headers — but only if it's NOT also a known-compressed format.
+    // These first bytes are decisive regardless of block size.
     if is_executable(sample) {
         return ContentKind::Executable;
     }
     if let Some(kind) = magic_kind(sample) {
         return kind;
+    }
+    // Magic and exec headers don't need a minimum block; the statistical
+    // heuristics below do (a tiny sample cannot support an entropy estimate).
+    if data.len() < MIN_SAMPLE_SIZE {
+        return ContentKind::Binary;
     }
     if block_entropy(data) >= ALREADY_COMPRESSED_ENTROPY {
         return ContentKind::AlreadyCompressed;

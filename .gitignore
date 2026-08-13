@@ -19,3 +19,6 @@ logs/
 /data/
 enwik9
 enwik9.zip
+
+# decompress benchmark ciktilari
+*.dec
