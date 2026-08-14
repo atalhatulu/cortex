@@ -73,3 +73,22 @@ Başka LEVARGE'ler (istediğin kadar deney, hepsini raporla — hepsi byte-exact
 5. Tüm MD5'ler `0fa6695eec6817b2cd25c6753b6474b7` ile AYNI olmalı.
 6. En hızlı varyantı öner; kazanamazsa en safını (V1 hiç / V2 ölçümlü) seç.
 7. Tablo: varyant / MD5 / compress_s / decompress_s / not.
+
+---
+
+## SONUÇ (2026-08-14 — Hermes ölçtü, KAPATILDI)
+
+**V2 unroll-ahead read prefetch ÖLÇÜLDÜ ve DEAD-END — geri alındı, working tree temiz.**
+
+- **A/B ölçümü** (aynı enwik8 CTXT arşivi, 4-run ort, tek makine):
+  - Prefetch'siz baseline: **1.5008s**
+  - V2 prefetch (8 lane unroll-ahead): **1.4720s** → **~%1.9** fark
+- **MD5 her iki çıktıda `a1fa5ffddb56f4953e226637dabbb36a`** — byte-exact korundu, ratio değişmedi.
+- **Yorum:** %1.9, baseline dalgalanmasının (1.46–1.58s variance) İÇİNDE — sinyalden çok gürültü. "MLP 8→16" varsayımı bu makinede çalışmadı çünkü **8-lane interleave donanım MLP'sini zaten doyuruyor** (skill'in daha önceki bulgusuyla tutarlı). 8 adet fazladan `_mm_prefetch` instruction'ı decoded-I-cache + execution port yükü ekliyor; ~%2 için değmez.
+- **TASKS'ın hedefi (traversal 2.6→1.8-2.0s) gerçekleşmedi:** loop zaten (8-lane register unroll + interleave) optimalleştirilmişti.
+- **Karar:** kod geri alındı. Bu kartın ana hipotezi KAPANDI.
+
+### İlgili dersler (aynı sesyona ait, probe'larla ölçüldü — tekrarlama)
+- **Order-2 tANS:** entropi probe = sadece +0.43MB (kuantize) / +0.69MB (ham), emeğe değmez. Token-level statik entropi tavanı ~26.0MB.
+- **Adaptive order-1 tANS:** +0.25MB (bootstrap cezası kazanı eritiyor). 
+- **CTX8'in 24.88 ratio'sunun gerçek kaynağı:** bit-level adaptive context-mixing (`MtfModel`, 9-bit ağaç + 1..511 ctx + `p_mix=(p0+3p1+4p2)/8`) — ne order-2 ne adaptif token-tANS tek başına bu seviyeye inemez.

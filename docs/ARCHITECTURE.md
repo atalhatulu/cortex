@@ -142,6 +142,20 @@ Disiplin: `rm -f` çıktı önce (Cortex var olan çıktıda işi atlar → saht
   Pencere 256× büyüyünce oran ~1MB iyileşti ama compress 6× yavaşladı. **LZ77 temelde BWT ratio'suna
   ulaşamaz** (gzip-sınıfı). "Aralığı doldurma" = iki AYRIK mimari, tuning yeri değil. `lz77.rs` tamamen silindi.
 
+### Ratio bayrağı — token-level tANS tavanı (ölçülmüş, 2026-08-14, TEKRAR ÖNERME)
+Entropi probe'ları (18.68M gerçek MTF token, order-0/1/2 conditional entropy):
+- **Order-2 tANS**: +0.43MB (kuantize 81ctx) / +0.69MB (ham) — tablo gömme maliyetine değmez.
+- **Adaptive order-1 tANS**: +0.25MB — bootstrap cezası kazancı eritiyor.
+- **Token-level statik entropi tavanı ~26.0MB** — ister order-2 ister adaptif olsun, sembol-bazlı model
+  24.88'e (CTX8) İNEMEZ. CTX8'in 24.88 ratio'sunun kaynağı **bit-level adaptive context-mixing**
+  (`MtfModel`: 9-bit ağaç + 1..511 ctx + `p_mix=(p0+3p1+4p2)/8`), token-histogram değil. tANS'ı oraya
+  çekmeye çalışmak doğasına aykırı ve ölçülüp kapatıldı.
+
+### Read prefetch on inverse-BWT — DEAD-END (ölçülmüş, 2026-08-14, TEKRAR ÖNERME)
+V2 unroll-ahead prefetch (8 lane, `_mm_prefetch` T0): A/B = baseline 1.5008s → 1.4720s (~%1.9).
+MD5 sabit (`a1fa...`), ratio değişmedi. %1.9 variance içinde gürültü — 8-lane interleave donanım MLP'sini
+zaten doyuruyor. Geri alındı. Full kayıt: `docs/TASKS_bwt_cache.md`.
+
 ### Not: elindeki öneriler bu ölçüleri bilmiyorsa hayal üretir
 Katışıksız "LZ+Range Coder = LZMA gibi 25MB" tahmini, cortex'te ölçülüp reddedilmiştir (34.26MB).
 Bir modele cortex mimarisini verirken bu dosyayı ver; tahmin tablolarına güvenme.
