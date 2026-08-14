@@ -14,6 +14,10 @@ use rayon::prelude::*;
 use std::fs;
 use std::time::{Duration, Instant};
 
+thread_local! {
+    pub static HIST2D_POOL: std::cell::RefCell<Box<[[u32; 257]; 256]>> = std::cell::RefCell::new(Box::new([[0u32; 257]; 256]));
+}
+
 fn get_available_memory_mb() -> Option<usize> {
     #[cfg(target_os = "linux")]
     {
@@ -201,29 +205,37 @@ where
                     }
 
                     let mut hist = [0u32; 257];
-                    let mut hist2d = Box::new([[0u32; 257]; 256]);
-                    let mut prev = 256;
-                    for &t in &tokens {
-                        hist[t as usize] += 1;
-                        if prev < 256 {
-                            hist2d[prev][t as usize] += 1;
+                    let mut out = crate::HIST2D_POOL.with(|pool| {
+                        let mut hist2d = pool.borrow_mut();
+                        for ctx in 0..256 {
+                            hist2d[ctx].fill(0);
                         }
-                        if t <= 255 {
-                            prev = t as usize;
+                        
+                        let mut prev = 256;
+                        for &t in &tokens {
+                            hist[t as usize] += 1;
+                            if prev < 256 {
+                                hist2d[prev][t as usize] += 1;
+                            }
+                            if t <= 255 {
+                                prev = t as usize;
+                            }
                         }
-                    }
-
-                    let mut out = crate::tans::encode(&hist, &*hist2d, &tokens);
+                        crate::tans::encode(&hist, &*hist2d, &tokens)
+                    });
 
                     let mut raw_hist2d = vec![0u8; 256 * 257 * 4];
-                    let mut rptr = 0;
-                    for ctx in 0..256 {
-                        for sym in 0..257 {
-                            let bytes = hist2d[ctx][sym].to_le_bytes();
-                            raw_hist2d[rptr..rptr+4].copy_from_slice(&bytes);
-                            rptr += 4;
+                    crate::HIST2D_POOL.with(|pool| {
+                        let hist2d = pool.borrow();
+                        let mut rptr = 0;
+                        for ctx in 0..256 {
+                            for sym in 0..257 {
+                                let bytes = hist2d[ctx][sym].to_le_bytes();
+                                raw_hist2d[rptr..rptr+4].copy_from_slice(&bytes);
+                                rptr += 4;
+                            }
                         }
-                    }
+                    });
                     let comp_hist2d = zstd::encode_all(raw_hist2d.as_slice(), 3).unwrap();
                     let comp_len = comp_hist2d.len() as u32;
 
@@ -521,22 +533,27 @@ where
                                         Ok(d) => d,
                                         Err(_) => return stage1_tx.send((chunk_idx, Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to decompress hist2d")))).map_err(|_| ()),
                                     };
-                                    let mut hist2d = Box::new([[0u32; 257]; 256]);
-                                    let mut rptr = 0;
-                                    for ctx in 0..256 {
-                                        for sym in 0..257 {
-                                            hist2d[ctx][sym] = u32::from_le_bytes(raw_hist2d[rptr..rptr+4].try_into().unwrap());
-                                            rptr += 4;
+                                    let res = crate::HIST2D_POOL.with(|pool| {
+                                        let mut hist2d = pool.borrow_mut();
+                                        let mut rptr = 0;
+                                        for ctx in 0..256 {
+                                            for sym in 0..257 {
+                                                hist2d[ctx][sym] = u32::from_le_bytes(raw_hist2d[rptr..rptr+4].try_into().unwrap());
+                                                rptr += 4;
+                                            }
                                         }
-                                    }
 
-                                    let mut hist = [0u32; 257];
-                                    for i in 0..257 {
-                                        hist[i] = u32::from_le_bytes(chunk[ptr..ptr+4].try_into().unwrap());
-                                        ptr += 4;
-                                    }
+                                        let mut hist = [0u32; 257];
+                                        let mut hptr = ptr;
+                                        for i in 0..257 {
+                                            hist[i] = u32::from_le_bytes(chunk[hptr..hptr+4].try_into().unwrap());
+                                            hptr += 4;
+                                        }
 
-                                    match crate::tans::decode(&hist, &*hist2d, num_tokens as usize, &chunk[ptr..]) {
+                                        crate::tans::decode(&hist, &*hist2d, num_tokens as usize, &chunk[hptr..])
+                                    });
+
+                                    match res {
                                         Ok(tokens) => Ok(DecompressStage1::Normal {
                                             pidx,
                                             tokens,
