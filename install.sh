@@ -85,16 +85,22 @@ info "CLI kuruldu: $BINDIR/cortex"
 
 # ---------------------------------------------------------------------------
 # PATH desteği
+rc_updated=0
 case ":$PATH:" in
   *":$BINDIR:"*) ;;
   *)
     for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
       if [ -f "$rc" ] && ! grep -qs "$BINDIR" "$rc"; then
         printf '\nexport PATH="$PATH:%s"\n' "$BINDIR" >> "$rc"
-        info "PATH guncellendi ($rc)"
+        info "PATH eklendi ($rc)"
+        rc_updated=1
       fi
     done
-    warn "PATH guncel degil; yeni shell ac, ya da: export PATH=\"\$PATH:$BINDIR\""
+    if [ "$rc_updated" -eq 1 ]; then
+      info "Yeni shell acinda PATH aktif olacak: $BINDIR"
+    else
+      warn "PATH'e $BINDIR eklenemedi; manuel: export PATH=\"\$PATH:$BINDIR\""
+    fi
     ;;
 esac
 
