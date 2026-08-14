@@ -92,27 +92,27 @@ OGG/MP4/WebM/WAV…) full pipeline'a sokulmaz, **raw STORE** edilir → boşa za
 
 Disiplin: `rm -f` çıktı önce (Cortex var olan çıktıda işi atlar → sahte 0.0s), python `perf_counter` 3-run.
 
-### enwik9 (1GB)
+### enwik9 (1GB) — canlı ölçüm 2026-08-14 (tek-run; ratio) + arşiv (süre)
 | Codec | Ratio (MB) | Compress | Decompress |
 |-------|-----------:|---------:|-----------:|
-| Cortex **CTX8** | 206.4 | ~38s | 15.75s |
-| Cortex **CTXT-O1** | 219.7 | ~31s | ~11.5s (idle 11.46) |
-| Cortex **CTXF** | 229.8 | ~116s | **1.45s** |
+| Cortex **CTX8** | 206 | 56.72s | 16.29s |
+| Cortex **CTXT-O1** | 219 | 49.86s | 14.57s |
+| Cortex **CTXF** | 229 | 235.49s | **1.69s** |
 | xz -9 | 205.7 | 367.5s | 2.53s |
 | zstd -19 | 224.4 | 675.6s | 2.23s |
-| gzip -9 | 307.6 | 45.1s | 3.32s |
-| bzip2 -9 | 242.2 | 69.1s | 32.99s |
+| gzip -9 | 307 | 44.09s | 3.39s |
+| bzip2 -9 | 242 | 75.11s | 33.32s |
 
-### enwik8 (100MB) — CTXT ratio düzeltildi (2026-08-14 A/B ölçümü: 26.52MB gerçek, skill kaydı 25.29 drift etmiş)
+### enwik8 (100MB) — canlı ölçüm 2026-08-14 (tek-run)
 | Codec | Ratio (MB) | Compress | Decompress |
 |-------|-----------:|---------:|-----------:|
-| Cortex **CTX8** | 24.88 | ~6.0s | ~1.9s |
-| Cortex **CTXT-O1** | 26.52 | ~4.4s | ~1.5s |
-| Cortex **CTXF** | 26.21 | 15.4s | **0.14s** |
-| xz -9 | 23.71 | 71.14s | 0.26s |
-| zstd -19 | 25.70 | 51.55s | 0.16s |
-| bzip2 -9 | 27.66 | 6.65s | 3.30s |
-| gzip -9 | 34.76 | 5.34s | 0.33s |
+| Cortex **CTX8** | 24.88 | 5.74s | 2.31s |
+| Cortex **CTXT-O1** | 26.52 | 4.85s | 1.57s |
+| Cortex **CTXF** | 26.21 | 20.72s | **0.20s** |
+| xz -9 | 23.71 | 93.40s | 1.02s |
+| zstd -19 | 25.70 | 72.18s | 0.34s |
+| bzip2 -9 | 27.66 | 7.27s | 4.04s |
+| gzip -9 | 34.76 | 5.12s | 0.48s |
 
 > CTXT enwik8 26.52MB üç commit'te A/B doğrulandı (55b5201 / b056e8a / HEAD = aynı 26,522,369 bayt) — pool optimizasyonu ratio'yu bozmadı. enwik9'da CTXT ratio %21.97 (219.7MB); oran blok sayısıyla iyileşir (6 blok → 60 blok).
 
