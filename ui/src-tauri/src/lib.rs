@@ -135,9 +135,16 @@ fn send_notification(title: String, body: String) {
 }
 
 #[tauri::command]
-async fn compress_cmd(app: AppHandle, input_paths: Vec<String>, output_path: String, password: Option<String>, level: u8, split_size: usize) -> Result<String, String> {
+async fn compress_cmd(app: AppHandle, input_paths: Vec<String>, output_path: String, password: Option<String>, level: u8, split_size: usize, mode: Option<String>) -> Result<String, String> {
     let start = Instant::now();
     let temp_tar_path = format!("{}.tmp.tar", output_path);
+    // Mode: "balanced" (CTXT, default) | "ratio" (CTX8) | "fast" (CTXF)
+    let mode = mode.unwrap_or_else(|| "balanced".to_string());
+    let (fast, use_tans) = match mode.as_str() {
+        "ratio" => (false, false),
+        "fast" => (true, false),
+        _ => (false, true), // balanced — default
+    };
     
     let mut meta_items = Vec::new();
     
@@ -193,7 +200,7 @@ async fn compress_cmd(app: AppHandle, input_paths: Vec<String>, output_path: Str
         let pwd_ref = pwd_clone.as_deref();
         // Block size is derived from `level` inside the library
         // (`block_size_for_level`), the single source of truth.
-        cortex::compress_file_with_progress(&temp_tar_clone, &out_clone, Some(&meta_json), pwd_ref, level, split_size, false, false, false, |processed, total| {
+        cortex::compress_file_with_progress(&temp_tar_clone, &out_clone, Some(&meta_json), pwd_ref, level, split_size, fast, use_tans, |processed, total| {
             let _ = app.emit("progress", ProgressPayload {
                 processed,
                 total,
@@ -275,7 +282,6 @@ async fn read_metadata_cmd(input_path: String) -> Result<String, String> {
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
-      use tauri::Manager;
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

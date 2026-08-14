@@ -83,7 +83,7 @@ pub struct Stats {
 }
 
 pub fn compress_file(input: &str, output: &str) -> std::io::Result<Stats> {
-    compress_file_with_progress(input, output, None, None, 3, 0, false, false, |_, _| {})
+    compress_file_with_progress(input, output, None, None, 3, 0, false, true, |_, _| {})
 }
 
 pub fn decompress_file(input: &str, output: &str) -> std::io::Result<Stats> {

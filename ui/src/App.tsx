@@ -45,6 +45,8 @@ function App() {
   const [password, setPassword] = useState<string>('');
 
   const [splitSize, setSplitSize] = useState<number>(0);
+  // Compression mode: balanced (CTXT, default) | ratio (CTX8) | fast (CTXF)
+  const [mode, setMode] = useState<string>('balanced');
   
   const [progress, setProgress] = useState<ProgressPayload | null>(null);
   const [speed, setSpeed] = useState<string>('');
@@ -97,7 +99,8 @@ function App() {
                 outputPath: defaultOut,
                 password: null,
                 level: 3,
-                splitSize: 0
+                splitSize: 0,
+                mode
             });
             await message(res, { title: 'CORTEX', kind: 'info' });
             await invoke('exit_app');
@@ -265,7 +268,8 @@ function App() {
             outputPath: outPath,
             password: password ? password : null,
             level: 3,
-            splitSize: splitSize > 0 ? splitSize * 1024 * 1024 : 0
+            splitSize: splitSize > 0 ? splitSize * 1024 * 1024 : 0,
+            mode
         });
         setStatusMessage(res);
         loadDirectory(currentPath);
@@ -365,6 +369,17 @@ function App() {
         </div>
 
         <div className="settings-group">
+          <select
+            className="level-select"
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+            disabled={isProcessing}
+            title="Compression mode: Balanced (default) / Max ratio / Max speed"
+          >
+            <option value="balanced">Balanced (CTXT)</option>
+            <option value="ratio">Max ratio (CTX8)</option>
+            <option value="fast">Max speed (CTXF)</option>
+          </select>
           <select 
             className="level-select"
             value={splitSize}

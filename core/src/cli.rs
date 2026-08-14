@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "cortex", about = "Experimental lossless text compressor")]
+#[command(
+    name = "cortex",
+    version,
+    about = "Lossless archiver — Balanced (CTXT) by default; --ratio for max compression, --fast for max speed"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -15,18 +19,18 @@ pub enum Commands {
         input: String,
         /// The output file path (optional, defaults to <input>.ctx)
         output: Option<String>,
-        /// Compression level. BWT mode: 1=1MB 2=4MB 3=16MB 9=64MB blocks. Zstd fast mode: zstd compression level (default 19).
+        /// BWT block level: 1=1MB 2=4MB 3=16MB 9=64MB (larger = better ratio, slower). Zstd fast mode: zstd level (default 19).
         #[arg(short, long)]
         level: Option<u8>,
         /// Password for encryption (optional)
         #[arg(short, long)]
         password: Option<String>,
-        /// Use Fast Mode (LZ + rANS) instead of Maximum Mode (BWT + CM)
+        /// Fast mode (CTXF, zstd): max decompress speed, lower ratio
         #[arg(long, default_value_t = false)]
         fast: bool,
-        /// Use BWT+tANS balance mode (CTXT) instead of BWT+range-coder (CTX8) or Zstd fast mode (CTXF)
+        /// Max compression ratio mode (CTX8, BWT + range coder). Default is Balanced (CTXT).
         #[arg(long, default_value_t = false)]
-        tans: bool,
+        ratio: bool,
         /// Split archive into volumes of given size in MB (0 to disable)
         #[arg(short, long, default_value_t = 0)]
         split: usize,

@@ -57,8 +57,11 @@ fn main() -> std::io::Result<()> {
             quiet,
             verbose,
             fast,
-            tans,
+            ratio,
         } => {
+            // Default mod = BWT+tANS (CTXT, Balanced). --ratio -> CTX8, --fast -> CTXF.
+            // CLI `--tans` flag'i kaldirildi: Balanced artik varsayilan (skill binding karari).
+            let use_tans = !fast && !ratio;
             setup_threads(threads);
             let out_file = output.unwrap_or_else(|| format!("{}.ctx", input));
             check_force(&out_file, force)?;
@@ -106,8 +109,8 @@ fn main() -> std::io::Result<()> {
                 pwd_ref,     // password
                 level_val,   // level
                 split_bytes, // split_size (bytes)
-                fast,                        // fast mode
-                tans,                        // tans mode
+                fast,                        // fast mode (CTXF)
+                use_tans,                    // balanced/tans mode (CTXT, default) — false if --ratio
                 |processed, total| {
                     if !quiet {
                         if !init {
