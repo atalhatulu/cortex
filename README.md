@@ -9,7 +9,7 @@ engine. One engine, three aims:
 | **Max ratio** | `--ratio` | BWT + Order-2 adaptive range (CTX8) | 24.88 MB | ~1.9 s | Archiving / maximum compression |
 | **Max speed** | `--fast` | zstd (CTXF) | 26.21 MB | ~0.14 s | Biggest speed, still good ratio |
 
-All numbers are **measured** on a 6-core box (AMD Ryzen 5 3500, 16 MB L3), 3-run
+All sizes labeled **MB are MiB** (1 MiB = 1,048,576 bytes). Times are **measured** on a 6-core box (AMD Ryzen 5 3500, 16 MB L3), 3-run
 averages, byte-exact (`cmp` + MD5) roundtrip. No speculative figures.
 
 ## 📊 Benchmark — enwik8 (100 MB Wikipedia text)
@@ -54,6 +54,7 @@ codec compresses, not comparable wall-clock to our Ryzen numbers above.
 
 Cortex + gzip/bzip2 are **live measured** (sequential, byte-exact). xz -9 and zstd -19 are
 **archived measured** figures (same box, prior run — their 1 GB compresses take 6–11 min).
+CPU governor, frequency and concurrent load can materially change wall-clock results.
 
 | Codec | Boyut (MB) | Compress | Decompress |
 |-------|-----------:|---------:|-----------:|
@@ -130,3 +131,8 @@ cd ui && npm install && npm run tauri dev
 **Beta.** The library + CLI are byte-exact on every tested corpus; the GUI compiles and
 bundles the same engine. `--ratio` roundtrip is verified at level 3 (16 MB blocks).
 Known caveats are tracked in `docs/ARCHITECTURE.md`.
+
+## Benchmark protocol
+
+Record the commit hash, mode, level, CPU governor/frequency and system load. Remove old outputs,
+run three sequential byte-exact roundtrips (`cmp` + MD5), then report the mean time and archive size in MiB.
