@@ -267,7 +267,8 @@ function App() {
             inputPaths: Array.from(selectedPaths), 
             outputPath: outPath,
             password: password ? password : null,
-            level: 3,
+            // Keep CTXF aligned with the CLI's documented zstd-19 default.
+            level: mode === 'fast' ? 19 : 3,
             splitSize: splitSize > 0 ? splitSize * 1024 * 1024 : 0,
             mode
         });

@@ -73,18 +73,18 @@ fn magic_kind(sample: &[u8]) -> Option<ContentKind> {
     }
     let sigs: &[(&[u8], ContentKind)] = &[
         (b"\x89PNG\r\n\x1a\n", ContentKind::AlreadyCompressed), // PNG
-        (b"\xff\xd8\xff", ContentKind::AlreadyCompressed),       // JPEG
+        (b"\xff\xd8\xff", ContentKind::AlreadyCompressed),      // JPEG
         (b"GIF87a", ContentKind::AlreadyCompressed),
         (b"GIF89a", ContentKind::AlreadyCompressed),
         (b"PK\x03\x04", ContentKind::AlreadyCompressed), // ZIP
         (b"\x1f\x8b\x08", ContentKind::AlreadyCompressed), // gzip
         (b"\x28\xb5\x2f\xfd", ContentKind::AlreadyCompressed), // zstd
         (b"\xfd7zXZ\x00", ContentKind::AlreadyCompressed), // xz
-        (b"BZh", ContentKind::AlreadyCompressed),       // bzip2
+        (b"BZh", ContentKind::AlreadyCompressed),        // bzip2
         (b"7z\xbc\xaf\x27\x1c", ContentKind::AlreadyCompressed), // 7z
-        (b"%PDF-", ContentKind::AlreadyCompressed),     // PDF (mostly compressed)
-        (b"fLaC", ContentKind::AlreadyCompressed),      // FLAC (lossless audio, still dense)
-        (b"OggS", ContentKind::AlreadyCompressed),      // OGG/Opus
+        (b"%PDF-", ContentKind::AlreadyCompressed),      // PDF (mostly compressed)
+        (b"fLaC", ContentKind::AlreadyCompressed),       // FLAC (lossless audio, still dense)
+        (b"OggS", ContentKind::AlreadyCompressed),       // OGG/Opus
         (b"fLaC\x00\x00\x00\x22", ContentKind::AlreadyCompressed),
     ];
     for (sig, kind) in sigs {

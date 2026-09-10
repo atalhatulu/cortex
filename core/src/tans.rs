@@ -130,7 +130,7 @@ fn build_tables(hist: &[u32; 257]) -> TansTable {
     }; TABLE_SIZE];
     let mut encode_state_table = [0u16; TABLE_SIZE];
     let mut next_freq = [0u32; 257];
-    
+
     for s in 0..257 {
         next_freq[s] = norm[s] as u32;
     }
@@ -215,7 +215,7 @@ impl<'a> BackwardBitReader<'a> {
         if buf.is_empty() {
             return Err(Error::new(ErrorKind::InvalidData, "Empty bitstream"));
         }
-        
+
         let mut ptr = buf.len();
         let mut bit_container = 0u64;
         let mut bits = 0;
@@ -241,7 +241,15 @@ impl<'a> BackwardBitReader<'a> {
         })
     }
 
-    fn pull_bits(&mut self, nb: u8) -> u16 {
+    fn pull_bits(&mut self, nb: u8) -> Result<u16> {
+        while self.bits_in_container < nb && self.ptr > 0 {
+            self.ptr -= 1;
+            self.bit_container = (self.bit_container << 8) | (self.buf[self.ptr] as u64);
+            self.bits_in_container += 8;
+        }
+        if self.bits_in_container < nb {
+            return Err(Error::new(ErrorKind::InvalidData, "Truncated tANS bitstream"));
+        }
         let val = (self.bit_container >> (self.bits_in_container - nb)) as u16;
         let mask = (1 << nb) - 1;
         let result = val & mask;
@@ -253,7 +261,7 @@ impl<'a> BackwardBitReader<'a> {
             self.bits_in_container += 8;
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -264,9 +272,17 @@ pub struct Order1Tables {
 impl Order1Tables {
     pub fn new() -> Self {
         let dummy = TansTable {
-            decode_table: [DecodeEntry { symbol: 0, nb_bits: 0, new_x: 0 }; TABLE_SIZE],
+            decode_table: [DecodeEntry {
+                symbol: 0,
+                nb_bits: 0,
+                new_x: 0,
+            }; TABLE_SIZE],
             encode_state_table: [0u16; TABLE_SIZE],
-            symbols_meta: [SymbolMeta { k: 0, threshold: 0, offset: 0 }; 257],
+            symbols_meta: [SymbolMeta {
+                k: 0,
+                threshold: 0,
+                offset: 0,
+            }; 257],
             norm: [0u16; 257],
         };
         let tables = vec![dummy; 257].into_boxed_slice();
@@ -292,24 +308,24 @@ thread_local! {
 pub fn encode(hist: &[u32; 257], hist2d: &[[u32; 257]; 256], tokens: &[u16]) -> Vec<u8> {
     let hist_size = 1028;
     let mut out = vec![0u8; hist_size + tokens.len() * 2 + 16];
-    
+
     for i in 0..257 {
         let bytes = hist[i].to_le_bytes();
         out[i * 4..i * 4 + 4].copy_from_slice(&bytes);
     }
-    
+
     if tokens.is_empty() {
         out.truncate(hist_size);
         return out;
     }
-    
+
     TANS_POOL_ENCODE.with(|pool| {
         let mut order1_tables = pool.borrow_mut();
         order1_tables.build(hist, hist2d);
         let mut state = TABLE_SIZE;
-        
+
         let mut writer = ForwardByteWriter::new(&mut out[hist_size..]);
-        
+
         let mut ctxs = Vec::with_capacity(tokens.len());
         let mut prev = 256;
         for &token in tokens {
@@ -318,15 +334,15 @@ pub fn encode(hist: &[u32; 257], hist2d: &[[u32; 257]; 256], tokens: &[u16]) -> 
                 prev = token as usize;
             }
         }
-        
+
         for i in (0..tokens.len()).rev() {
             let token = tokens[i];
             let ctx = ctxs[i];
             let s = token as usize;
-            
+
             let tables = &order1_tables.tables[ctx];
             let meta = &tables.symbols_meta[s];
-            
+
             let nb_bits = if state < meta.threshold as usize {
                 meta.k - 1
             } else {
@@ -334,57 +350,65 @@ pub fn encode(hist: &[u32; 257], hist2d: &[[u32; 257]; 256], tokens: &[u16]) -> 
             };
             let bits = (state & ((1 << nb_bits) - 1)) as u16;
             writer.push_bits(bits, nb_bits);
-            
+
             let x = state >> nb_bits;
             let offset = meta.offset as usize + x - tables.norm[s] as usize;
             state = tables.encode_state_table[offset] as usize;
         }
-        
+
         writer.push_bits(state as u16, (TABLE_BITS + 1) as u8);
         let bytes_written = writer.flush();
-        
+
         out.truncate(hist_size + bytes_written);
     });
-    
+
     out
 }
 
-pub fn decode(hist: &[u32; 257], hist2d: &[[u32; 257]; 256], len: usize, bytes: &[u8]) -> Result<Vec<u16>> {
+pub fn decode(
+    hist: &[u32; 257],
+    hist2d: &[[u32; 257]; 256],
+    len: usize,
+    bytes: &[u8],
+) -> Result<Vec<u16>> {
     if len == 0 {
         return Ok(Vec::new());
     }
-    
+
     if bytes.is_empty() {
-        return Err(Error::new(ErrorKind::InvalidData, "Empty payload for non-zero length"));
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "Empty payload for non-zero length",
+        ));
     }
-    
+
     TANS_POOL_DECODE.with(|pool| {
         let mut order1_tables = pool.borrow_mut();
         order1_tables.build(hist, hist2d);
-        
+
         let mut reader = BackwardBitReader::new(bytes)?;
-        
-        let mut state = reader.pull_bits((TABLE_BITS + 1) as u8) as usize;
+
+        let mut state = reader.pull_bits((TABLE_BITS + 1) as u8)? as usize;
         if state >= 2 * TABLE_SIZE || state < TABLE_SIZE {
             return Err(Error::new(ErrorKind::InvalidData, "Invalid initial state"));
         }
         state -= TABLE_SIZE;
-        
+
         let mut tokens = Vec::with_capacity(len);
         let mut prev = 256;
         for _ in 0..len {
             let tables = &order1_tables.tables[prev];
             let entry = &tables.decode_table[state];
-            let bits = reader.pull_bits(entry.nb_bits);
+            let bits = reader.pull_bits(entry.nb_bits)?;
             state = entry.new_x as usize + bits as usize;
             let symbol = entry.symbol;
             tokens.push(symbol);
-            
+
             if symbol <= 255 {
                 prev = symbol as usize;
             }
         }
-        
+
         Ok(tokens)
     })
 }

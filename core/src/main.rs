@@ -91,7 +91,11 @@ fn main() -> std::io::Result<()> {
             let split_bytes = (split as u64).saturating_mul(1024 * 1024) as usize;
 
             let file_meta = std::fs::metadata(&input)?;
-            let modified_ts = file_meta.modified()?.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let modified_ts = file_meta
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             let meta_json = serde_json::json!([{
                 "name": Path::new(&input).file_name().unwrap_or_default().to_string_lossy(),
                 "size": file_meta.len(),
@@ -106,11 +110,11 @@ fn main() -> std::io::Result<()> {
                 &input,
                 &out_file,
                 Some(meta_bytes.as_slice()), // metadata
-                pwd_ref,     // password
-                level_val,   // level
-                split_bytes, // split_size (bytes)
+                pwd_ref,                     // password
+                level_val,                   // level
+                split_bytes,                 // split_size (bytes)
                 fast,                        // fast mode (CTXF)
-                use_tans,                    // balanced/tans mode (CTXT, default) — false if --ratio
+                use_tans, // balanced/tans mode (CTXT, default) — false if --ratio
                 |processed, total| {
                     if !quiet {
                         if !init {

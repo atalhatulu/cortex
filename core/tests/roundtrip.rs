@@ -1,6 +1,8 @@
 use cortex::mtf::{bwt_mtf_rle, decode_rle_mtf_bwt, MtfModel};
 use cortex::rangecoder::{Decoder, Encoder};
-use cortex::{compress_file, decompress_file};
+use cortex::{
+    compress_file, compress_file_with_progress, decompress_file, decompress_file_with_progress,
+};
 use rand::seq::SliceRandom;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::fs;
@@ -150,11 +152,91 @@ fn test_file_api_magic_stored_roundtrip() {
     let original = fs::read(input_path).unwrap();
     let restored = fs::read(dec_path).unwrap();
 
-    assert_eq!(original, restored, "magic STORE roundtrip must be byte-exact");
+    assert_eq!(
+        original, restored,
+        "magic STORE roundtrip must be byte-exact"
+    );
 
     fs::remove_file(input_path).unwrap();
     fs::remove_file(comp_path).unwrap();
     fs::remove_file(dec_path).unwrap();
+}
+
+#[test]
+fn test_file_api_all_modes_and_encryption_roundtrip() {
+    let input_path = "tests/test_modes_in.bin";
+    let data = b"file api roundtrip test string over multiple blocks maybe?".to_vec();
+    fs::write(input_path, &data).unwrap();
+
+    for (name, fast, tans, password) in [
+        ("ctx8", false, false, None),
+        ("ctxt", false, true, Some("correct horse battery staple")),
+        ("ctxf", true, false, None),
+    ] {
+        let comp_path = format!("tests/test_modes_{name}.ctx");
+        let dec_path = format!("tests/test_modes_{name}.out");
+        compress_file_with_progress(
+            input_path,
+            &comp_path,
+            Some(br#"[{\"name\":\"test\"}]"#),
+            password,
+            1,
+            0,
+            fast,
+            tans,
+            |_, _| {},
+        )
+        .unwrap();
+        decompress_file_with_progress(&comp_path, &dec_path, password, |_, _| {}).unwrap();
+        assert_eq!(fs::read(&dec_path).unwrap(), data, "{name} must roundtrip");
+        fs::remove_file(comp_path).unwrap();
+        fs::remove_file(dec_path).unwrap();
+    }
+
+    fs::remove_file(input_path).unwrap();
+}
+
+#[test]
+fn test_decoder_rejects_truncated_and_malformed_archives() {
+    let truncated = "tests/test_truncated.ctx";
+    let truncated_out = "tests/test_truncated.out";
+    // CTX8 header: one original byte, but no chunk follows.
+    let mut header = Vec::new();
+    header.extend_from_slice(b"CTX8");
+    header.extend_from_slice(&1u64.to_le_bytes());
+    header.push(0);
+    header.extend_from_slice(&(1024 * 1024u32).to_le_bytes());
+    header.extend_from_slice(&0u32.to_le_bytes());
+    fs::write(truncated, header).unwrap();
+    assert!(decompress_file(truncated, truncated_out).is_err());
+
+    let malformed = "tests/test_malformed_tans.ctx";
+    let malformed_out = "tests/test_malformed_tans.out";
+    let mut archive = Vec::new();
+    archive.extend_from_slice(b"CTXT");
+    archive.extend_from_slice(&1u64.to_le_bytes());
+    archive.push(0);
+    archive.extend_from_slice(&(1024 * 1024u32).to_le_bytes());
+    archive.extend_from_slice(&0u32.to_le_bytes());
+    let mut chunk = vec![0u8; 32 + 4 + 4 + 1028];
+    chunk[32..36].copy_from_slice(&1u32.to_le_bytes());
+    chunk[36..40].copy_from_slice(&u32::MAX.to_le_bytes());
+    archive.extend_from_slice(&(chunk.len() as u32).to_le_bytes());
+    archive.extend_from_slice(&chunk);
+    fs::write(malformed, archive).unwrap();
+    assert!(decompress_file(malformed, malformed_out).is_err());
+
+    for path in [truncated, truncated_out, malformed, malformed_out] {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[test]
+fn test_inverse_bwt_rejects_out_of_range_primary_indices() {
+    // A malformed archive controls pidx. It must be rejected before the
+    // inverse-BWT hot loop's unchecked indexing is reached.
+    let err = decode_rle_mtf_bwt([u32::MAX; 8], &[0], 1).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 }
 
 /// Content classification unit test: known magics, plain text, and high-entropy

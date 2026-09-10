@@ -285,6 +285,16 @@ pub fn decode_rle_mtf_bwt(
         return Ok(bwt);
     }
 
+    // `pidx` comes from the archive and is later used by the hot inverse-BWT
+    // loop with unchecked indexing. Validate every lane before entering that
+    // loop so a corrupt archive is an ordinary decode error, never UB.
+    if pidx.iter().any(|&index| index as usize >= n) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid BWT primary index",
+        ));
+    }
+
     let mut counts = [0usize; 256];
     for &b in &bwt {
         counts[b as usize] += 1;
